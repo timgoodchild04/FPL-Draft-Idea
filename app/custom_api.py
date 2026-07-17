@@ -326,8 +326,7 @@ def fixtures() -> dict:
             return {"gameweeks": []}
         a, b = custom_league.collect_divisions(s, season)
         names = {e.entry_id: e.manager_name for e in a + b}
-        deadlines = {g.id: g.deadline_time
-                     for g in s.exec(select(Gameweek)).all()}
+        gwmeta = {g.id: g for g in s.exec(select(Gameweek)).all()}
         rows = s.exec(
             select(Fixture).where(Fixture.season_id == season.id).order_by(Fixture.gameweek)).all()
         weeks: dict[int, list] = {}
@@ -338,10 +337,21 @@ def fixtures() -> dict:
                 "home_id": f.home_entry, "away_id": f.away_entry,
                 "kind": f.kind,
             })
+
+        def gw_status(gw: int) -> str:
+            g = gwmeta.get(gw)
+            if g is None:
+                return "upcoming"
+            if g.finished:
+                return "finished"
+            return "current" if g.is_current else "upcoming"
+
         meta = s.get(LeagueMeta, season.id)
         return {
             "generated_at": meta.fixtures_generated_at if meta else None,
-            "gameweeks": [{"gameweek": gw, "deadline": deadlines.get(gw), "matches": m}
+            "gameweeks": [{"gameweek": gw,
+                           "deadline": gwmeta[gw].deadline_time if gw in gwmeta else None,
+                           "status": gw_status(gw), "matches": m}
                           for gw, m in sorted(weeks.items())],
         }
 

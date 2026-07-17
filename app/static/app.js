@@ -82,7 +82,7 @@ function renderLogin() {
       <h3>Log in</h3>
       <label>Username</label><input id="lg-user" autocomplete="username">
       <label>Password</label><input id="lg-pass" type="password" autocomplete="current-password">
-      <br><button class="btn" id="lg-btn">Log in</button>
+      <div class="btns"><button class="btn" id="lg-btn">Log in</button></div>
     </div>`;
   const submit = async () => {
     const h = "Basic " + btoa(el("lg-user").value + ":" + el("lg-pass").value);
@@ -170,7 +170,7 @@ views.setup = async function () {
       </div>
       ${sizeNote}
       ${locked ? '<p class="muted">🔒 Teams locked. Use “Start over” to change them.</p>'
-               : '<br><button class="btn" id="saveBtn">Save teams</button>'}
+               : '<div class="btns"><button class="btn" id="saveBtn">Save teams</button></div>'}
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -179,18 +179,21 @@ views.setup = async function () {
         ? `<p class="muted">Pair everyone up (each player once). Each pair plays one extra
              "derby" game; the other 2 extra games stay random.</p>
            ${rivStatus}${rivRows}
-           ${locked ? "" : '<button class="btn small" id="rivRandom">Randomise pairs</button> <button class="btn" id="rivSave" style="margin-left:6px">Save rivalries</button>'}`
+           ${locked ? "" : '<div class="btns"><button class="btn" id="rivRandom">Randomise pairs</button><button class="btn green" id="rivSave">Save rivalries</button></div>'}`
         : '<p class="empty">Save both divisions (equal size) first, then you can set rivalries.</p>'}
     </div>
 
     <div class="card" style="margin-top:18px">
       <h3>3. Generate the season</h3>
       ${locked
-        ? `<p>🔒 <b>Fixtures generated and locked.</b> The schedule is fixed for the season.</p>
-           <button class="btn green" id="syncBtn">Sync latest results</button>`
-        : `<p class="muted">Enabled once both divisions are saved and equal size.</p>
-           <button class="btn green" id="genBtn" ${st.can_generate ? "" : "disabled"}>Generate fixtures (one time only)</button>`}
-      ${st.has_season ? '<button class="btn pink small" id="resetBtn" style="margin-left:8px">Start over</button>' : ""}
+        ? "<p>🔒 <b>Fixtures generated and locked.</b> The schedule is fixed for the season.</p>"
+        : '<p class="muted">Enabled once both divisions are saved and equal size.</p>'}
+      <div class="btns">
+        ${locked
+          ? '<button class="btn green" id="syncBtn">Sync latest results</button>'
+          : `<button class="btn green" id="genBtn" ${st.can_generate ? "" : "disabled"}>Generate fixtures (one time only)</button>`}
+        ${st.has_season ? '<button class="btn pink" id="resetBtn">Start over</button>' : ""}
+      </div>
     </div>`;
 
   el("logoutBtn").onclick = () => {
@@ -349,6 +352,12 @@ views.fixtures = async function () {
   };
   const lockbar = data.generated_at
     ? `<div class="lockbar">🔒 Fixtures locked in on <b>${fmt(data.generated_at, true)}</b></div>` : "";
+  const legend = `<div class="legend">
+      <span><span class="dot" style="background:var(--accent)"></span> Current gameweek</span>
+      <span><span class="dot" style="background:var(--accent-soft)"></span> Upcoming</span>
+      <span><span class="dot" style="background:#cbd0d6"></span> Finished</span>
+    </div>`;
+  const tagText = { finished: "Finished", current: "Live", upcoming: "Upcoming" };
   const me = String(myEntryId || "");
   const matchHtml = (m) => {
     const homeMine = me && String(m.home_id) === me;
@@ -359,11 +368,15 @@ views.fixtures = async function () {
         <span>${home} <span class="muted">v</span> ${away}</span>
         <span class="k ${m.kind === "cross" ? "cross" : ""}">${m.kind}</span></div>`;
   };
-  app().innerHTML = helpBox + lockbar + `<h2>Fixtures</h2><div class="gw-grid">${
-    data.gameweeks.map((w) => `<div class="gw-card"><h4>Gameweek ${w.gameweek}</h4>
+  app().innerHTML = helpBox + lockbar + `<h2>Fixtures</h2>` + legend + `<div class="gw-grid">${
+    data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
+      <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
       w.matches.map(matchHtml).join("")
     }</div>`).join("")}</div>`;
+
+  const cur = data.gameweeks.find((w) => w.status === "current");
+  if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
 };
 
 // ============================ LEAGUE ======================================
