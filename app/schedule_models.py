@@ -21,10 +21,11 @@ class Fixture(SQLModel, table=True):
 
 
 class LeagueMeta(SQLModel, table=True):
-    """Season-level metadata, e.g. when the schedule was locked in."""
+    """Season-level metadata, e.g. when the schedule was locked in / last synced."""
 
     season_id: int = Field(foreign_key="season.id", primary_key=True)
     fixtures_generated_at: str | None = None  # ISO UTC timestamp
+    points_synced_at: str | None = None       # ISO UTC timestamp of last results sync
 
 
 class Rivalry(SQLModel, table=True):

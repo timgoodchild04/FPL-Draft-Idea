@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -136,6 +137,7 @@ def _status(s: Session, season: Season) -> dict:
         "rivalries": rivalries, "rivalries_valid": rivalries_valid,
         "fixtures_generated": fixtures_generated, "points_synced": points_synced,
         "fixtures_generated_at": meta.fixtures_generated_at if meta else None,
+        "points_synced_at": meta.points_synced_at if meta else None,
         "can_generate": equal and not fixtures_generated,
     }
 
@@ -318,6 +320,39 @@ def sync_points(_admin: bool = Depends(require_admin)) -> dict:
             raise HTTPException(502, f"Failed to fetch points: {e}")
 
 
+REFRESH_STALE_SECONDS = 1800  # 30 minutes
+
+
+@current_router.post("/refresh")
+def refresh() -> dict:
+    """Public, throttled: re-pull results only if the last sync is stale.
+
+    Cheap no-op when fresh, so it's safe to call on every page load without
+    hammering FPL. Not admin-gated - viewers keep the data current just by visiting.
+    """
+    with Session(ENGINE) as s:
+        season = _current(s)
+        if season is None:
+            return {"synced": False, "last_updated": None}
+        meta = s.get(LeagueMeta, season.id)
+        last = meta.points_synced_at if meta else None
+        if last:
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
+                if age < REFRESH_STALE_SECONDS:
+                    return {"synced": False, "last_updated": last}
+            except Exception:
+                pass
+        try:
+            from app.sync import sync_gameweeks_only
+            sync_gameweeks_only()
+            custom_league.sync_points(s, season)
+        except Exception:
+            return {"synced": False, "last_updated": last}
+        meta = s.get(LeagueMeta, season.id)
+        return {"synced": True, "last_updated": meta.points_synced_at if meta else None}
+
+
 @current_router.get("/fixtures")
 def fixtures() -> dict:
     with Session(ENGINE) as s:
@@ -353,6 +388,7 @@ def fixtures() -> dict:
         meta = s.get(LeagueMeta, season.id)
         return {
             "generated_at": meta.fixtures_generated_at if meta else None,
+            "last_updated": meta.points_synced_at if meta else None,
             "gameweeks": [{"gameweek": gw,
                            "deadline": gwmeta[gw].deadline_time if gw in gwmeta else None,
                            "status": gw_status(gw), "matches": m}
@@ -366,10 +402,12 @@ def table() -> dict:
         season = _current(s)
         if season is None:
             return {"combined": [], "division_a": [], "division_b": []}
+        meta = s.get(LeagueMeta, season.id)
+        last = meta.points_synced_at if meta else None
         try:
-            return custom_league.standings(s, season)
+            return {**custom_league.standings(s, season), "last_updated": last}
         except ValueError:
-            return {"combined": [], "division_a": [], "division_b": []}
+            return {"combined": [], "division_a": [], "division_b": [], "last_updated": last}
 
 
 @current_router.get("/playoffs")

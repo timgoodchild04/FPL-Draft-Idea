@@ -89,8 +89,9 @@ def generate_and_store_schedule(session: Session, season: Season, seed: int | No
             kind = "division" if div_of[h] == div_of[a] else "cross"
             session.add(Fixture(season_id=season.id, gameweek=gw,
                                 home_entry=h, away_entry=a, kind=kind))
-    session.merge(LeagueMeta(season_id=season.id,
-                             fixtures_generated_at=datetime.now(timezone.utc).isoformat()))
+    meta = session.get(LeagueMeta, season.id) or LeagueMeta(season_id=season.id)
+    meta.fixtures_generated_at = datetime.now(timezone.utc).isoformat()
+    session.add(meta)
     session.commit()
     return {"gameweeks": rounds, "teams": 2 * k, "fixtures": rounds * k}
 
@@ -118,6 +119,9 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
     finally:
         if own:
             client.close()
+    meta = session.get(LeagueMeta, season.id) or LeagueMeta(season_id=season.id)
+    meta.points_synced_at = datetime.now(timezone.utc).isoformat()
+    session.add(meta)
     session.commit()
     return {"teams": len(entries), "point_rows": rows, "failed": failed}
 

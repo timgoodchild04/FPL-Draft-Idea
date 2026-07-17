@@ -25,6 +25,21 @@ function toast(msg, isErr) {
 function help(title, bodyHtml) {
   return `<div class="help"><h4>ℹ️ ${esc(title)}</h4>${bodyHtml}</div>`;
 }
+function timeAgo(iso) {
+  if (!iso) return "not yet";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const s = (Date.now() - d.getTime()) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + " min ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return d.toLocaleDateString();
+}
+// Ask the server to re-pull results if they're stale (server throttles this).
+async function maybeRefresh() {
+  try { const r = await api("/api/custom/refresh", { method: "POST" }); return !!r.synced; }
+  catch { return false; }
+}
 
 // --- routing --------------------------------------------------------------
 const views = {};
@@ -321,6 +336,11 @@ views.setup = async function () {
 
 // ============================ FIXTURES ====================================
 views.fixtures = async function () {
+  await renderFixtures();
+  if (await maybeRefresh()) { toast("Results updated"); renderFixtures(); }
+};
+
+async function renderFixtures() {
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
         <p>14 managers in two divisions of 7, each drafted separately on FPL Draft.</p></div></div>
@@ -348,6 +368,7 @@ views.fixtures = async function () {
   };
   const lockbar = data.generated_at
     ? `<div class="lockbar">🔒 Fixtures locked in on <b>${fmt(data.generated_at, true)}</b></div>` : "";
+  const updated = `<div class="muted" style="margin:-4px 0 14px">Results updated ${timeAgo(data.last_updated)}</div>`;
   const legend = `<div class="legend">
       <span><span class="dot" style="background:var(--accent)"></span> Current gameweek</span>
       <span><span class="dot" style="background:var(--accent-soft)"></span> Upcoming</span>
@@ -369,7 +390,7 @@ views.fixtures = async function () {
         ${row(m.away, m.away_points, awayWin, awayMine)}
       </div>`;
   };
-  app().innerHTML = header + lockbar + legend + `<div class="gw-grid">${
+  app().innerHTML = header + lockbar + updated + legend + `<div class="gw-grid">${
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
       <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
@@ -393,8 +414,9 @@ views.league = async function () {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0">League</h2>
       ${isAdmin ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
-    </div>` + rulesPanel + `
-    <div id="tables" style="margin-top:14px"></div>
+    </div>
+    <div class="muted" id="lastUpd" style="margin:2px 0 10px"></div>` + rulesPanel + `
+    <div id="tables"></div>
     <h3 style="margin-top:26px">Playoffs (GW36-38)</h3>
     <div id="bracket"></div>`;
   if (el("syncBtn2")) el("syncBtn2").onclick = async () => {
@@ -403,10 +425,13 @@ views.league = async function () {
     renderTables(); renderBracket();
   };
   await Promise.all([renderTables(), renderBracket()]);
+  if (await maybeRefresh()) { toast("Results updated"); renderTables(); renderBracket(); }
 };
 
 async function renderTables() {
   const data = await api("/api/custom/table");
+  const lu = el("lastUpd");
+  if (lu) lu.textContent = data.last_updated ? `Results updated ${timeAgo(data.last_updated)}` : "No results synced yet";
   if (!data.combined || !data.combined.length) {
     el("tables").innerHTML = '<p class="empty">No table yet - generate fixtures and sync results first.</p>';
     return;
