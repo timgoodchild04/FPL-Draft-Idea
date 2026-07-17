@@ -327,6 +327,8 @@ def fixtures() -> dict:
         a, b = custom_league.collect_divisions(s, season)
         names = {e.entry_id: e.manager_name for e in a + b}
         gwmeta = {g.id: g for g in s.exec(select(Gameweek)).all()}
+        pts = {(p.entry_id, p.gameweek): p.points
+               for p in s.exec(select(EntryPoints).where(EntryPoints.season_id == season.id)).all()}
         rows = s.exec(
             select(Fixture).where(Fixture.season_id == season.id).order_by(Fixture.gameweek)).all()
         weeks: dict[int, list] = {}
@@ -335,6 +337,8 @@ def fixtures() -> dict:
                 "home": names.get(f.home_entry, str(f.home_entry)),
                 "away": names.get(f.away_entry, str(f.away_entry)),
                 "home_id": f.home_entry, "away_id": f.away_entry,
+                "home_points": pts.get((f.home_entry, f.gameweek)),
+                "away_points": pts.get((f.away_entry, f.gameweek)),
                 "kind": f.kind,
             })
 

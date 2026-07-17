@@ -147,13 +147,14 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-.match { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 4px 0; font-size: 14px; border-bottom: 1px dashed var(--line); }
-.match > span:first-child { flex: 1; min-width: 0; }
-.match .k { flex: none; font-size: 10px; padding: 1px 6px; border-radius: 5px; background: #eef1f4; color: var(--muted); text-transform: capitalize; }
-.match .k.cross { background: var(--accent-soft); color: var(--accent-dark); }
+.match { padding: 6px 2px; border-bottom: 1px dashed var(--line); }
 .match:last-child { border-bottom: none; }
-.match.mine { background: var(--accent-soft); border-radius: 6px; padding-left: 6px; padding-right: 6px; }
-.match.mine b { color: var(--accent-dark); }
+.match .mr { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: 14px; padding: 1px 0; }
+.match .mr .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match .mr .pt { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.match .mr.win .nm, .match .mr.win .pt { font-weight: 700; color: var(--ink); }
+.match .mr .nm.me { color: var(--accent-dark); font-weight: 600; }
+.match.mine { background: var(--accent-soft); border-radius: 8px; padding-left: 8px; padding-right: 8px; }
 .lockbar { background: var(--accent-soft); color: var(--accent-dark); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
 
 /* knockout bracket */
