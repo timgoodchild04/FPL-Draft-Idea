@@ -135,12 +135,15 @@ views.setup = async function () {
       <button class="btn small" id="logoutBtn">Log out</button>
     </div>
     <div class="card" style="margin-top:12px">
-      <h3>1. Your two divisions</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0">1. Your two divisions</h3>
+        ${locked ? "" : '<button class="btn small" id="fillTest" title="Fill with random valid IDs for testing">🎲 Fill test IDs</button>'}
+      </div>
       <div class="two-col">
-        <div><h4 style="color:var(--purple)">Division A</h4>
+        <div><h4 style="color:var(--purple)">Division A ${locked ? "" : '<button class="btn small" id="shuffle-a" title="Randomise order">🔀</button>'}</h4>
           <div class="row" style="gap:8px"><div style="flex:1"><label>Team ID</label></div><div style="flex:2"><label>Player</label></div></div>
           ${rows("a", entriesA)}</div>
-        <div><h4 style="color:var(--purple)">Division B</h4>
+        <div><h4 style="color:var(--purple)">Division B ${locked ? "" : '<button class="btn small" id="shuffle-b" title="Randomise order">🔀</button>'}</h4>
           <div class="row" style="gap:8px"><div style="flex:1"><label>Team ID</label></div><div style="flex:2"><label>Player</label></div></div>
           ${rows("b", entriesB)}</div>
       </div>
@@ -203,6 +206,38 @@ views.setup = async function () {
       if (inp) inp.addEventListener("change", () => lookupName(side, i));
     }
   });
+
+  // Shuffle a column's row order (id + resolved name move together).
+  function shuffleColumn(side) {
+    const vals = [];
+    for (let i = 0; i < rowCount; i++) {
+      const span = el(`${side}-nm-${i}`);
+      vals.push({ id: el(`${side}-id-${i}`).value, nm: span.innerHTML, cls: span.className });
+    }
+    for (let i = vals.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1)); [vals[i], vals[j]] = [vals[j], vals[i]];
+    }
+    for (let i = 0; i < rowCount; i++) {
+      el(`${side}-id-${i}`).value = vals[i].id;
+      const span = el(`${side}-nm-${i}`); span.innerHTML = vals[i].nm; span.className = vals[i].cls;
+    }
+  }
+  if (el("shuffle-a")) el("shuffle-a").onclick = () => shuffleColumn("a");
+  if (el("shuffle-b")) el("shuffle-b").onclick = () => shuffleColumn("b");
+
+  if (el("fillTest")) el("fillTest").onclick = async () => {
+    const btn = el("fillTest"); btn.disabled = true; btn.textContent = "Fetching…";
+    let r;
+    try { r = await api(`/api/custom/sample-ids?n=${rowCount * 2}`); }
+    catch (e) { btn.disabled = false; btn.textContent = "🎲 Fill test IDs"; return toast(e.message, true); }
+    r.ids.forEach((it, idx) => {
+      const side = idx < rowCount ? "a" : "b", i = idx % rowCount;
+      const inp = el(`${side}-id-${i}`), span = el(`${side}-nm-${i}`);
+      if (inp) { inp.value = it.entry_id; span.textContent = it.name; span.className = ""; }
+    });
+    btn.disabled = false; btn.textContent = "🎲 Fill test IDs";
+    toast(`Filled ${r.ids.length} test IDs - review and Save`);
+  };
 
   if (el("saveBtn")) el("saveBtn").onclick = async () => {
     let a, b;
@@ -282,8 +317,20 @@ views.fixtures = async function () {
     app().innerHTML = helpBox + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
     return;
   }
-  app().innerHTML = helpBox + `<h2>Fixtures</h2><div class="gw-grid">${
-    data.gameweeks.map((w) => `<div class="gw-card"><h4>Gameweek ${w.gameweek}</h4>${
+  const fmt = (iso, withTime) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    const opts = withTime
+      ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+      : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+    return d.toLocaleString(undefined, opts);
+  };
+  const lockbar = data.generated_at
+    ? `<div class="lockbar">🔒 Fixtures locked in on <b>${fmt(data.generated_at, true)}</b></div>` : "";
+  app().innerHTML = helpBox + lockbar + `<h2>Fixtures</h2><div class="gw-grid">${
+    data.gameweeks.map((w) => `<div class="gw-card"><h4>Gameweek ${w.gameweek}</h4>
+      ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
       w.matches.map((m) => `<div class="match"><span>${esc(m.home)} <span class="muted">v</span> ${esc(m.away)}</span>
         <span class="k ${m.kind === "cross" ? "cross" : ""}">${m.kind}</span></div>`).join("")
     }</div>`).join("")}</div>`;

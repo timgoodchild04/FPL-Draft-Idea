@@ -120,10 +120,16 @@ tr.qualified td { background: rgba(0,255,135,.16); }
 
 /* fixtures */
 .gw-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); }
-.gw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.gw-card h4 { margin: 0 0 8px; color: var(--purple); font-size: 14px; }
-.match { display: flex; justify-content: space-between; padding: 3px 0; font-size: 14px; border-bottom: 1px dashed var(--line); }
+.gw-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 900px) { .gw-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .gw-grid { grid-template-columns: 1fr; } }
+.gw-card h4 { margin: 0 0 2px; color: var(--purple); font-size: 14px; }
+.gw-deadline { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.match { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 14px; border-bottom: 1px dashed var(--line); }
+.match > span:first-child { flex: 1; min-width: 0; }
+.match .k { flex: none; }
 .match:last-child { border-bottom: none; }
+.lockbar { background: #efe9f3; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px; }
 .match .k { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: #efe9f3; color: var(--muted); }
 .match .k.cross { background: #e6f0ff; color: #2563eb; }
 
