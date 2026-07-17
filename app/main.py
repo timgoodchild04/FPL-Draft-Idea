@@ -23,7 +23,7 @@ from app.season_api import router as season_router
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="FPL Draft League", version="0.1")
+app = FastAPI(title="Branksbowl 26/27", version="0.1")
 app.include_router(draft_router)
 app.include_router(scoring_router)
 app.include_router(season_router)
