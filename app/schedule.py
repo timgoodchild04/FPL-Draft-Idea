@@ -25,14 +25,24 @@ def _key(a: str, b: str) -> Pair:
     return (a, b) if a < b else (b, a)
 
 
-def _extra_layer(teams: list[str], degree: int, rng: random.Random) -> Counter:
-    """`degree` random perfect matchings (edge-disjoint where possible).
+def _extra_layer(teams: list[str], degree: int, rng: random.Random,
+                 fixed: list[Pair] | None = None) -> Counter:
+    """`degree` extra perfect matchings (edge-disjoint where possible).
 
     Adds one game to each drawn pair, so every team gains `degree` extra games.
+    If `fixed` (a perfect matching, e.g. the derby pairs) is given, it is used as
+    the first extra matching and the rest are drawn at random.
     """
     edges: Counter = Counter()
     used: set[Pair] = set()
-    for _ in range(degree):
+    done = 0
+    if fixed:
+        for a, b in fixed:
+            k = _key(a, b)
+            used.add(k)
+            edges[k] += 1
+        done = 1
+    for _ in range(degree - done):
         pairs: list[Pair] | None = None
         for _try in range(2000):
             shuffled = teams[:]
@@ -52,7 +62,8 @@ def _extra_layer(teams: list[str], degree: int, rng: random.Random) -> Counter:
 
 
 def required_meetings(division_a: list[str], division_b: list[str],
-                      extra_per_team: int, rng: random.Random) -> Counter:
+                      extra_per_team: int, rng: random.Random,
+                      derby_pairs: list[Pair] | None = None) -> Counter:
     req: Counter = Counter()
     for members in (division_a, division_b):
         for a, b in combinations(members, 2):
@@ -60,7 +71,7 @@ def required_meetings(division_a: list[str], division_b: list[str],
     for a in division_a:
         for b in division_b:
             req[_key(a, b)] += 2
-    req.update(_extra_layer(division_a + division_b, extra_per_team, rng))
+    req.update(_extra_layer(division_a + division_b, extra_per_team, rng, derby_pairs))
     return req
 
 
@@ -96,15 +107,25 @@ def _find_matching(teams: list[str], remaining: Counter, rng: random.Random) -> 
 
 def generate_schedule(division_a: list[str], division_b: list[str], *,
                       rounds: int = 35, extra_per_team: int = 3,
-                      seed: int | None = None, restarts: int = 300) -> list[list[Pair]]:
-    """Return `rounds` gameweeks, each a list of 7 (team, team) pairs."""
+                      seed: int | None = None, restarts: int = 300,
+                      derby_pairs: list[Pair] | None = None) -> list[list[Pair]]:
+    """Return `rounds` gameweeks, each a list of 7 (team, team) pairs.
+
+    `derby_pairs`, if given, must be a perfect matching of all teams (each team
+    in exactly one pair); those meetings are guaranteed as one of the extra games.
+    """
     rng = random.Random(seed)
     teams = division_a + division_b
     if len(teams) % 2 != 0:
         raise ValueError("Need an even number of teams.")
 
+    if derby_pairs:
+        flat = [t for pair in derby_pairs for t in pair]
+        if len(derby_pairs) != len(teams) // 2 or sorted(flat) != sorted(teams):
+            raise ValueError("Derby pairs must pair every team exactly once.")
+
     for _outer in range(20):  # re-roll the extra layer if a draw proves unschedulable
-        req = required_meetings(division_a, division_b, extra_per_team, rng)
+        req = required_meetings(division_a, division_b, extra_per_team, rng, derby_pairs)
         for _attempt in range(restarts):
             remaining = Counter({k: v for k, v in req.items()})
             weeks: list[list[Pair]] = []
