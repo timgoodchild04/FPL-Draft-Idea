@@ -20,6 +20,13 @@ class Fixture(SQLModel, table=True):
     kind: str = "division"  # "division" or "cross"
 
 
+class LeagueMeta(SQLModel, table=True):
+    """Season-level metadata, e.g. when the schedule was locked in."""
+
+    season_id: int = Field(foreign_key="season.id", primary_key=True)
+    fixtures_generated_at: str | None = None  # ISO UTC timestamp
+
+
 class Rivalry(SQLModel, table=True):
     """A derby pairing (two teams who play an extra 'rivalry' game)."""
 

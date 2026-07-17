@@ -20,7 +20,8 @@ from app import custom_league, fpldraft_client, setup_league
 from app.db import ENGINE
 from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry, MirrorLink
-from app.schedule_models import EntryPoints, Fixture, Rivalry
+from app.models import Gameweek
+from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
 
 router = APIRouter(prefix="/api/seasons", tags=["custom-league"])
 current_router = APIRouter(prefix="/api/custom", tags=["custom-current"])
@@ -128,11 +129,13 @@ def _status(s: Session, season: Season) -> dict:
     flat = [x for r in rivs for x in (r.entry_a, r.entry_b)]
     rivalries_valid = (both_filled and equal and len(flat) == len(all_entries)
                        and sorted(flat) == sorted(all_entries.keys()))
+    meta = s.get(LeagueMeta, season.id)
     return {
         "has_season": True, "season_id": season.id,
         "divisions": divisions, "both_filled": both_filled, "sizes_equal": equal,
         "rivalries": rivalries, "rivalries_valid": rivalries_valid,
         "fixtures_generated": fixtures_generated, "points_synced": points_synced,
+        "fixtures_generated_at": meta.fixtures_generated_at if meta else None,
         "can_generate": equal and not fixtures_generated,
     }
 
@@ -259,8 +262,31 @@ def reset(_admin: bool = Depends(require_admin)) -> dict:
         s.exec(delete(Fixture).where(Fixture.season_id == season.id))
         s.exec(delete(EntryPoints).where(EntryPoints.season_id == season.id))
         s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
+        meta = s.get(LeagueMeta, season.id)
+        if meta:
+            s.delete(meta)
         s.commit()
         return _status(s, season)
+
+
+@current_router.get("/sample-ids")
+def sample_ids(n: int = 14, _admin: bool = Depends(require_admin)) -> dict:
+    """Find some real, valid FPL Draft team ids (for quick testing/filling)."""
+    import random
+    candidates = list(range(254800, 255260))
+    random.shuffle(candidates)
+    out, attempts = [], 0
+    with httpx.Client() as client:
+        for eid in candidates:
+            if len(out) >= n or attempts >= 60:
+                break
+            attempts += 1
+            try:
+                out.append({"entry_id": eid,
+                            "name": _entry_name(fpldraft_client.fetch_entry_public(client, eid), eid)})
+            except Exception:
+                continue
+    return {"ids": out}
 
 
 @current_router.post("/generate")
@@ -300,6 +326,8 @@ def fixtures() -> dict:
             return {"gameweeks": []}
         a, b = custom_league.collect_divisions(s, season)
         names = {e.entry_id: e.manager_name for e in a + b}
+        deadlines = {g.id: g.deadline_time
+                     for g in s.exec(select(Gameweek)).all()}
         rows = s.exec(
             select(Fixture).where(Fixture.season_id == season.id).order_by(Fixture.gameweek)).all()
         weeks: dict[int, list] = {}
@@ -309,7 +337,12 @@ def fixtures() -> dict:
                 "away": names.get(f.away_entry, str(f.away_entry)),
                 "kind": f.kind,
             })
-        return {"gameweeks": [{"gameweek": gw, "matches": m} for gw, m in sorted(weeks.items())]}
+        meta = s.get(LeagueMeta, season.id)
+        return {
+            "generated_at": meta.fixtures_generated_at if meta else None,
+            "gameweeks": [{"gameweek": gw, "deadline": deadlines.get(gw), "matches": m}
+                          for gw, m in sorted(weeks.items())],
+        }
 
 
 @current_router.get("/table")

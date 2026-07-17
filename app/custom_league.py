@@ -7,6 +7,7 @@ fixtures (win 3 / draw 1 / loss 0, tie-break = total season points).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import httpx
 from sqlmodel import Session, delete, select
@@ -15,7 +16,7 @@ from app import fpldraft_client, schedule
 from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry
 from app.models import Gameweek
-from app.schedule_models import EntryPoints, Fixture, Rivalry
+from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
 
 
 @dataclass
@@ -88,6 +89,8 @@ def generate_and_store_schedule(session: Session, season: Season, seed: int | No
             kind = "division" if div_of[h] == div_of[a] else "cross"
             session.add(Fixture(season_id=season.id, gameweek=gw,
                                 home_entry=h, away_entry=a, kind=kind))
+    session.merge(LeagueMeta(season_id=season.id,
+                             fixtures_generated_at=datetime.now(timezone.utc).isoformat()))
     session.commit()
     return {"gameweeks": rounds, "teams": 2 * k, "fixtures": rounds * k}
 
