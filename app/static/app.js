@@ -358,11 +358,16 @@ views.fixtures = async function () {
   const matchHtml = (m) => {
     const homeMine = me && String(m.home_id) === me;
     const awayMine = me && String(m.away_id) === me;
-    const home = homeMine ? `<b>${esc(m.home)}</b>` : esc(m.home);
-    const away = awayMine ? `<b>${esc(m.away)}</b>` : esc(m.away);
+    const played = m.home_points != null && m.away_points != null;
+    const homeWin = played && m.home_points > m.away_points;
+    const awayWin = played && m.away_points > m.home_points;
+    const row = (name, pts, win, mine) =>
+      `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
+      `<span class="pt">${pts != null ? pts : ""}</span></div>`;
     return `<div class="match${homeMine || awayMine ? " mine" : ""}">
-        <span>${home} <span class="muted">v</span> ${away}</span>
-        <span class="k ${m.kind === "cross" ? "cross" : ""}">${m.kind}</span></div>`;
+        ${row(m.home, m.home_points, homeWin, homeMine)}
+        ${row(m.away, m.away_points, awayWin, awayMine)}
+      </div>`;
   };
   app().innerHTML = header + lockbar + legend + `<div class="gw-grid">${
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
