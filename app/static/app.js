@@ -321,24 +321,20 @@ views.setup = async function () {
 
 // ============================ FIXTURES ====================================
 views.fixtures = async function () {
-  const helpBox = help("League rules",
-    `<ul style="margin:0">
-       <li><b>14 managers, 2 divisions of 7.</b> Each division drafts separately on the
-         official FPL Draft site.</li>
-       <li><b>35-game regular season</b> (GW1-35), one match each week:
-         <ul>
-           <li>each team in your division <b>×3</b> (18 games)</li>
-           <li>each team in the other division <b>×2</b> (14 games)</li>
-           <li><b>3 extra games</b> - one derby vs your rival, plus 2 random</li>
-         </ul></li>
-       <li><b>Scoring:</b> head-to-head - win 3, draw 1. Ranked on points, then total FPL
-         points scored (PF). Only finished gameweeks count.</li>
-       <li><b>Playoffs (GW36-38):</b> top 4 overall. Semis #1v#4 &amp; #2v#3 aggregated over
-         GW36+37; final on GW38. Ties broken by total season points.</li>
-     </ul>`);
+  const rulesPanel = `<div class="rules">
+      <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
+        <p>14 managers in two divisions of 7, each drafted separately on FPL Draft.</p></div></div>
+      <div class="rule"><div class="rule-ic">📅</div><div><b>35-game season</b>
+        <p>One match a week: your division ×3, the other division ×2, plus 3 extras (one derby + two random).</p></div></div>
+      <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
+        <p>Win 3, draw 1. Ranked on points, then total FPL points (PF). Only finished gameweeks count.</p></div></div>
+      <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
+        <p>Top 4 overall. Semis #1v#4 &amp; #2v#3 over GW36+37, then the final on GW38.</p></div></div>
+    </div>`;
+  const header = `<h2>Fixtures</h2>` + rulesPanel;
   const data = await api("/api/custom/fixtures");
   if (!data.gameweeks.length) {
-    app().innerHTML = helpBox + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
+    app().innerHTML = header + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
     return;
   }
   const fmt = (iso, withTime) => {
@@ -368,7 +364,7 @@ views.fixtures = async function () {
         <span>${home} <span class="muted">v</span> ${away}</span>
         <span class="k ${m.kind === "cross" ? "cross" : ""}">${m.kind}</span></div>`;
   };
-  app().innerHTML = helpBox + lockbar + `<h2>Fixtures</h2>` + legend + `<div class="gw-grid">${
+  app().innerHTML = header + lockbar + legend + `<div class="gw-grid">${
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
       <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
