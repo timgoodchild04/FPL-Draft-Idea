@@ -1,0 +1,15 @@
+# Render blueprint - free web service.
+# Data lives in Postgres via DATABASE_URL (set it to your free Neon connection
+# string in the Render dashboard) so it survives restarts and idle sleep.
+services:
+  - type: web
+    name: fpl-draft-league
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DATABASE_URL
+        sync: false   # paste your Neon connection string in the dashboard

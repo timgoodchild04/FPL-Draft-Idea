@@ -1,0 +1,127 @@
+"""FastAPI app exposing the synced FPL data.
+
+Milestone 1 is read-only: just enough endpoints to confirm real data landed.
+Run: uvicorn app.main:app --reload
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from sqlmodel import Session, func, select
+
+from app.db import ENGINE, init_db
+from app.draft_api import router as draft_router
+from app.custom_api import current_router as custom_current_router
+from app.custom_api import router as custom_router
+from app.mirror_api import router as mirror_router
+from app.models import Gameweek, Player, PlayerGameweekStats, Team
+from app.scoring_api import router as scoring_router
+from app.season_api import router as season_router
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+app = FastAPI(title="FPL Draft League", version="0.1")
+app.include_router(draft_router)
+app.include_router(scoring_router)
+app.include_router(season_router)
+app.include_router(mirror_router)
+app.include_router(custom_router)
+app.include_router(custom_current_router)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    init_db()
+    # On a fresh (e.g. cloud) database, populate the gameweek finished-flags the
+    # league tables need. One API call; ignored if it can't reach FPL at boot.
+    try:
+        with Session(ENGINE) as s:
+            if not s.exec(select(Gameweek).limit(1)).first():
+                from app.sync import sync_gameweeks_only
+                sync_gameweeks_only()
+    except Exception as e:  # never block startup on a network hiccup
+        print("startup gameweek sync skipped:", e)
+
+
+@app.get("/api/gameweeks")
+def list_gameweeks() -> list[dict]:
+    with Session(ENGINE) as s:
+        rows = s.exec(select(Gameweek).order_by(Gameweek.id)).all()
+        return [{"id": g.id, "name": g.name, "finished": g.finished} for g in rows]
+
+
+@app.get("/health")
+def health() -> dict:
+    with Session(ENGINE) as s:
+        return {
+            "status": "ok",
+            "teams": s.exec(select(func.count()).select_from(Team)).one(),
+            "players": s.exec(select(func.count()).select_from(Player)).one(),
+            "gameweeks": s.exec(select(func.count()).select_from(Gameweek)).one(),
+            "gw_stat_rows": s.exec(select(func.count()).select_from(PlayerGameweekStats)).one(),
+        }
+
+
+@app.get("/teams")
+def list_teams() -> list[dict]:
+    with Session(ENGINE) as s:
+        teams = s.exec(select(Team).order_by(Team.name)).all()
+        return [{"id": t.id, "name": t.name, "short_name": t.short_name} for t in teams]
+
+
+@app.get("/players")
+def list_players(
+    position: str | None = Query(None, description="GK/DEF/MID/FWD"),
+    team_id: int | None = None,
+    limit: int = 50,
+    order_by_points: bool = True,
+) -> list[dict]:
+    type_by_pos = {"GK": 1, "DEF": 2, "MID": 3, "FWD": 4}
+    with Session(ENGINE) as s:
+        stmt = select(Player, Team.short_name).join(Team, Player.team_id == Team.id)
+        if position and position.upper() in type_by_pos:
+            stmt = stmt.where(Player.element_type == type_by_pos[position.upper()])
+        if team_id is not None:
+            stmt = stmt.where(Player.team_id == team_id)
+        if order_by_points:
+            stmt = stmt.order_by(Player.total_points.desc())
+        stmt = stmt.limit(limit)
+        rows = s.exec(stmt).all()
+        return [
+            {
+                "id": p.id,
+                "name": p.web_name,
+                "position": p.position,
+                "team": short_name,
+                "total_points": p.total_points,
+                "goals": p.goals_scored,
+                "assists": p.assists,
+            }
+            for p, short_name in rows
+        ]
+
+
+@app.get("/players/{player_id}/gameweeks")
+def player_gameweeks(player_id: int) -> list[dict]:
+    with Session(ENGINE) as s:
+        rows = s.exec(
+            select(PlayerGameweekStats)
+            .where(PlayerGameweekStats.player_id == player_id)
+            .order_by(PlayerGameweekStats.gameweek_id)
+        ).all()
+        return [
+            {"gameweek": r.gameweek_id, "points": r.total_points, "minutes": r.minutes}
+            for r in rows
+        ]
+
+
+# --- web UI (served last so /api and other routes win) -------------------
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
