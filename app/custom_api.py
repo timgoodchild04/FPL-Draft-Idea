@@ -335,6 +335,7 @@ def fixtures() -> dict:
             weeks.setdefault(f.gameweek, []).append({
                 "home": names.get(f.home_entry, str(f.home_entry)),
                 "away": names.get(f.away_entry, str(f.away_entry)),
+                "home_id": f.home_entry, "away_id": f.away_entry,
                 "kind": f.kind,
             })
         meta = s.get(LeagueMeta, season.id)

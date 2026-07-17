@@ -2,6 +2,7 @@
 
 // --- helpers --------------------------------------------------------------
 let adminAuth = sessionStorage.getItem("adminAuth") || null;
+let myEntryId = localStorage.getItem("myEntryId") || "";  // viewer's chosen team
 
 async function api(path, opts) {
   const headers = { "Content-Type": "application/json", ...(opts && opts.headers) };
@@ -34,6 +35,26 @@ function setView(name) {
 }
 document.querySelectorAll("#tabs button").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
+
+async function populateMePicker() {
+  const sel = el("mePicker");
+  if (!sel) return;
+  let players = [];
+  try {
+    const st = await api("/api/custom/status");
+    if (st.divisions) players = st.divisions.flatMap((d) => d.entries || []);
+  } catch { /* leave empty */ }
+  sel.innerHTML = '<option value="">Pick your team…</option>' +
+    players.map((p) => `<option value="${p.entry_id}">${esc(p.name)}</option>`).join("");
+  if (myEntryId) sel.value = myEntryId;
+  sel.onchange = () => {
+    myEntryId = sel.value;
+    if (myEntryId) localStorage.setItem("myEntryId", myEntryId);
+    else localStorage.removeItem("myEntryId");
+    const active = document.querySelector("#tabs button.active");
+    if (active) setView(active.dataset.view);
+  };
+}
 
 async function refreshBadge() {
   try {
@@ -328,11 +349,20 @@ views.fixtures = async function () {
   };
   const lockbar = data.generated_at
     ? `<div class="lockbar">🔒 Fixtures locked in on <b>${fmt(data.generated_at, true)}</b></div>` : "";
+  const me = String(myEntryId || "");
+  const matchHtml = (m) => {
+    const homeMine = me && String(m.home_id) === me;
+    const awayMine = me && String(m.away_id) === me;
+    const home = homeMine ? `<b>${esc(m.home)}</b>` : esc(m.home);
+    const away = awayMine ? `<b>${esc(m.away)}</b>` : esc(m.away);
+    return `<div class="match${homeMine || awayMine ? " mine" : ""}">
+        <span>${home} <span class="muted">v</span> ${away}</span>
+        <span class="k ${m.kind === "cross" ? "cross" : ""}">${m.kind}</span></div>`;
+  };
   app().innerHTML = helpBox + lockbar + `<h2>Fixtures</h2><div class="gw-grid">${
     data.gameweeks.map((w) => `<div class="gw-card"><h4>Gameweek ${w.gameweek}</h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
-      w.matches.map((m) => `<div class="match"><span>${esc(m.home)} <span class="muted">v</span> ${esc(m.away)}</span>
-        <span class="k ${m.kind === "cross" ? "cross" : ""}">${m.kind}</span></div>`).join("")
+      w.matches.map(matchHtml).join("")
     }</div>`).join("")}</div>`;
 };
 
@@ -367,10 +397,11 @@ async function renderTables() {
     return;
   }
   const top4 = new Set(data.combined.slice(0, 4).map((r) => r.entry_id));
+  const me = String(myEntryId || "");
   const tbl = (title, rows) => `<div class="card"><h3>${esc(title)}</h3>
     <table><thead><tr><th>#</th><th>Manager</th><th class="num">P</th><th class="num">W</th>
       <th class="num">D</th><th class="num">L</th><th class="num">PF</th><th class="num">Pts</th></tr></thead>
-    <tbody>${rows.map((r) => `<tr class="${top4.has(r.entry_id) ? "qualified" : ""}">
+    <tbody>${rows.map((r) => `<tr class="${top4.has(r.entry_id) ? "qualified" : ""}${String(r.entry_id) === me ? " mine" : ""}">
       <td>${r.rank}</td><td>${esc(r.manager)}${top4.has(r.entry_id) ? '<span class="qtag">PO</span>' : ""}</td>
       <td class="num">${r.played}</td><td class="num">${r.won}</td><td class="num">${r.drawn}</td>
       <td class="num">${r.lost}</td><td class="num">${r.points_for}</td>
@@ -418,5 +449,6 @@ async function renderBracket() {
 }
 
 // --- boot -----------------------------------------------------------------
+populateMePicker();
 refreshBadge();
-setView("setup");
+setView("league");
