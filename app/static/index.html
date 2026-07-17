@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Draft League</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">⚽ Draft League</div>
+    <span id="statusBadge" class="badge"></span>
+  </header>
+
+  <nav id="tabs">
+    <button data-view="setup" class="active">Setup</button>
+    <button data-view="fixtures">Fixtures</button>
+    <button data-view="league">League</button>
+  </nav>
+
+  <main id="app"></main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
