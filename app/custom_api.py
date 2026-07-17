@@ -7,8 +7,12 @@ Two routers:
 """
 from __future__ import annotations
 
+import base64
+import os
+import secrets
+
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
@@ -16,10 +20,26 @@ from app import custom_league, fpldraft_client, setup_league
 from app.db import ENGINE
 from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry, MirrorLink
-from app.schedule_models import EntryPoints, Fixture
+from app.schedule_models import EntryPoints, Fixture, Rivalry
 
 router = APIRouter(prefix="/api/seasons", tags=["custom-league"])
 current_router = APIRouter(prefix="/api/custom", tags=["custom-current"])
+
+
+def require_admin(authorization: str | None = Header(default=None)) -> bool:
+    """HTTP Basic gate for admin (setup) actions. Credentials from env, default admin/admin."""
+    user = os.environ.get("ADMIN_USER", "admin")
+    pw = os.environ.get("ADMIN_PASS", "admin")
+    unauth = HTTPException(401, "Admin login required", headers={"WWW-Authenticate": "Basic"})
+    if not authorization or not authorization.startswith("Basic "):
+        raise unauth
+    try:
+        u, p = base64.b64decode(authorization.split(" ", 1)[1]).decode().split(":", 1)
+    except Exception:
+        raise unauth
+    if not (secrets.compare_digest(u, user) and secrets.compare_digest(p, pw)):
+        raise unauth
+    return True
 
 
 # ========================= season-scoped ================================
@@ -98,9 +118,20 @@ def _status(s: Session, season: Season) -> dict:
     sizes = [x["teams"] for x in divisions]
     both_filled = len(divisions) == 2 and all(n > 0 for n in sizes)
     equal = both_filled and len(set(sizes)) == 1 and sizes[0] >= 2
+
+    all_entries = {e["entry_id"]: e["name"] for d in divisions for e in d["entries"]}
+    rivs = s.exec(select(Rivalry).where(Rivalry.season_id == season.id)).all()
+    rivalries = [{"a": r.entry_a, "b": r.entry_b,
+                  "a_name": all_entries.get(r.entry_a, str(r.entry_a)),
+                  "b_name": all_entries.get(r.entry_b, str(r.entry_b))} for r in rivs]
+    # Valid when they pair every team exactly once.
+    flat = [x for r in rivs for x in (r.entry_a, r.entry_b)]
+    rivalries_valid = (both_filled and equal and len(flat) == len(all_entries)
+                       and sorted(flat) == sorted(all_entries.keys()))
     return {
         "has_season": True, "season_id": season.id,
         "divisions": divisions, "both_filled": both_filled, "sizes_equal": equal,
+        "rivalries": rivalries, "rivalries_valid": rivalries_valid,
         "fixtures_generated": fixtures_generated, "points_synced": points_synced,
         "can_generate": equal and not fixtures_generated,
     }
@@ -127,7 +158,7 @@ def status() -> dict:
 
 
 @current_router.post("/teams")
-def set_teams(body: TeamsIn) -> dict:
+def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
     """Set each division's roster from team ids. Names are pulled from the site;
     every id is validated first, so an invalid id blocks the save (not silently)."""
     a, b = body.division_a, body.division_b
@@ -163,8 +194,45 @@ def set_teams(body: TeamsIn) -> dict:
             for eid in lst:
                 s.add(MirrorEntry(division_id=div.id, league_entry_id=eid,
                                   entry_id=eid, manager_name=names[eid], team_name=""))
+        # Teams changed - any existing rivalries reference old ids, so clear them.
+        s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
         s.commit()
         return _status(s, season)
+
+
+class RivalriesIn(BaseModel):
+    pairs: list[list[int]]  # e.g. [[254949, 254948], ...] - each team exactly once
+
+
+@current_router.post("/rivalries")
+def set_rivalries(body: RivalriesIn, _admin: bool = Depends(require_admin)) -> dict:
+    """Set the derby pairs. Must pair every team exactly once (a perfect matching)."""
+    with Session(ENGINE) as s:
+        season = _current(s)
+        if season is None:
+            raise HTTPException(400, "Set up your teams first.")
+        if s.exec(select(Fixture).where(Fixture.season_id == season.id).limit(1)).first():
+            raise HTTPException(400, "Fixtures already generated and locked - use 'Start over' to change rivalries.")
+        team_ids = {e.entry_id for d in _stage1_divisions(s, season)
+                    for e in s.exec(select(MirrorEntry).where(MirrorEntry.division_id == d.id)).all()}
+        flat = [x for pair in body.pairs for x in pair]
+        if any(len(p) != 2 for p in body.pairs):
+            raise HTTPException(400, "Each rivalry must have exactly two teams.")
+        if any(a == b for a, b in body.pairs):
+            raise HTTPException(400, "A team can't be its own rival.")
+        if sorted(flat) != sorted(team_ids):
+            raise HTTPException(400, "Rivalries must pair every team exactly once "
+                                     "(each player in one and only one pair).")
+        s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
+        for aid, bid in body.pairs:
+            s.add(Rivalry(season_id=season.id, entry_a=aid, entry_b=bid))
+        s.commit()
+        return _status(s, season)
+
+
+@current_router.get("/auth-check")
+def auth_check(_admin: bool = Depends(require_admin)) -> dict:
+    return {"ok": True}
 
 
 @current_router.get("/lookup")
@@ -179,7 +247,7 @@ def lookup(entry_id: int) -> dict:
 
 
 @current_router.post("/reset")
-def reset() -> dict:
+def reset(_admin: bool = Depends(require_admin)) -> dict:
     """Clear fixtures, points and teams for the current season so it can be redone."""
     with Session(ENGINE) as s:
         season = _current(s)
@@ -190,12 +258,13 @@ def reset() -> dict:
             s.exec(delete(MirrorLink).where(MirrorLink.division_id == d.id))
         s.exec(delete(Fixture).where(Fixture.season_id == season.id))
         s.exec(delete(EntryPoints).where(EntryPoints.season_id == season.id))
+        s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
         s.commit()
         return _status(s, season)
 
 
 @current_router.post("/generate")
-def generate(seed: int | None = None) -> dict:
+def generate(seed: int | None = None, _admin: bool = Depends(require_admin)) -> dict:
     with Session(ENGINE) as s:
         season = _current(s)
         if season is None:
@@ -208,7 +277,7 @@ def generate(seed: int | None = None) -> dict:
 
 
 @current_router.post("/sync-points")
-def sync_points() -> dict:
+def sync_points(_admin: bool = Depends(require_admin)) -> dict:
     with Session(ENGINE) as s:
         season = _current(s)
         if season is None:

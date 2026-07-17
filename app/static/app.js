@@ -1,8 +1,12 @@
 "use strict";
 
 // --- helpers --------------------------------------------------------------
+let adminAuth = sessionStorage.getItem("adminAuth") || null;
+
 async function api(path, opts) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const headers = { "Content-Type": "application/json", ...(opts && opts.headers) };
+  if (adminAuth) headers["Authorization"] = adminAuth;
+  const res = await fetch(path, { ...opts, headers });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) throw new Error((data && data.detail) || res.statusText);
   return data;
@@ -44,24 +48,51 @@ async function refreshBadge() {
 // ============================ SETUP =======================================
 const ROSTER_ROWS = 7;
 
+async function ensureAdmin() {
+  if (!adminAuth) return false;
+  try { await api("/api/custom/auth-check"); return true; }
+  catch { adminAuth = null; sessionStorage.removeItem("adminAuth"); return false; }
+}
+
+function renderLogin() {
+  app().innerHTML = help("Admin login",
+    "<p>The Setup page is admin-only. The <b>Fixtures</b> and <b>League</b> tabs are open to everyone.</p>") + `
+    <div class="card" style="max-width:360px">
+      <h3>Log in</h3>
+      <label>Username</label><input id="lg-user" autocomplete="username">
+      <label>Password</label><input id="lg-pass" type="password" autocomplete="current-password">
+      <br><button class="btn" id="lg-btn">Log in</button>
+    </div>`;
+  const submit = async () => {
+    const h = "Basic " + btoa(el("lg-user").value + ":" + el("lg-pass").value);
+    try {
+      const res = await fetch("/api/custom/auth-check", { headers: { Authorization: h } });
+      if (!res.ok) throw 0;
+    } catch { return toast("Invalid username or password", true); }
+    adminAuth = h; sessionStorage.setItem("adminAuth", h);
+    toast("Logged in"); refreshBadge(); views.setup();
+  };
+  el("lg-btn").onclick = submit;
+  el("lg-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+}
+
 views.setup = async function () {
+  if (!(await ensureAdmin())) { renderLogin(); return; }
   const st = await api("/api/custom/status");
-  const helpBox = help("Setup - enter your two divisions, then generate the season",
+  const helpBox = help("Setup - enter teams, set rivalries, then generate",
     `<ol>
-       <li>Put <b>7 team IDs</b> in each division - the number from a team's URL,
-         e.g. <code>.../entry/<b>254949</b>/...</code>. That's all: the player's name is
-         pulled from the site automatically.</li>
-       <li>Hit <b>Save teams</b>. Every id is checked - if one isn't a real FPL Draft
-         team, the save is rejected so you can fix it.</li>
-       <li>With both divisions equal size, hit <b>Generate fixtures</b> - it builds the
-         random 35-gameweek schedule <b>and locks it</b> (one time only).</li>
-     </ol>
-     <p>Then see <b>Fixtures</b> and <b>League</b>, and use <b>Sync latest results</b> after
-     each gameweek. <b>Start over</b> clears everything to redo a season.</p>`);
+       <li><b>Team IDs</b> - put 7 per division (the number in a team's URL). Names are
+         pulled from the site automatically; invalid ids are rejected on save.</li>
+       <li><b>Rivalries</b> - optionally pair everyone into derbies; each pair plays an
+         extra game. The other 2 extra games are random.</li>
+       <li><b>Generate fixtures</b> - builds the random 35-gameweek schedule and <b>locks
+         it</b> (one time only). Use <b>Start over</b> to redo.</li>
+     </ol>`);
 
   const divs = st.divisions || [{ entries: [] }, { entries: [] }];
   const entriesA = (divs[0] && divs[0].entries) || [];
   const entriesB = (divs[1] && divs[1].entries) || [];
+  const allPlayers = [...entriesA, ...entriesB];
   const locked = st.has_season && st.fixtures_generated;
   const rowCount = Math.max(ROSTER_ROWS, entriesA.length, entriesB.length);
 
@@ -79,9 +110,31 @@ views.setup = async function () {
   if (st.both_filled && !st.sizes_equal)
     sizeNote = `<p class="down">⚠ The divisions have different sizes (${divs[0].teams} vs ${divs[1].teams}). They must be equal to generate fixtures.</p>`;
 
+  // --- rivalries section ---
+  const canRiv = st.both_filled && st.sizes_equal;
+  const npairs = Math.floor(allPlayers.length / 2);
+  const rivPrefill = st.rivalries || [];
+  const optsFor = (selId) => allPlayers.map((p) =>
+    `<option value="${p.entry_id}" ${selId == p.entry_id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  const rivRows = canRiv ? Array.from({ length: npairs }, (_, i) => {
+    const pr = rivPrefill[i] || {};
+    return `<div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
+        <div style="flex:1"><select id="riv-a-${i}" ${locked ? "disabled" : ""}>${optsFor(pr.a)}</select></div>
+        <div style="flex:0;color:var(--muted)">vs</div>
+        <div style="flex:1"><select id="riv-b-${i}" ${locked ? "disabled" : ""}>${optsFor(pr.b)}</select></div>
+      </div>`;
+  }).join("") : "";
+  const rivStatus = !canRiv ? "" : st.rivalries_valid
+    ? '<p class="up">✅ Rivalries set - every player has one derby.</p>'
+    : (rivPrefill.length ? '<p class="down">⚠ Rivalries incomplete - save a full set or leave blank for all-random extras.</p>'
+                         : '<p class="muted">Not set - all 3 extra games will be random.</p>');
+
   app().innerHTML = helpBox + `
-    <h2>Setup</h2>
-    <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <h2 style="margin:0">Setup</h2>
+      <button class="btn small" id="logoutBtn">Log out</button>
+    </div>
+    <div class="card" style="margin-top:12px">
       <h3>1. Your two divisions</h3>
       <div class="two-col">
         <div><h4 style="color:var(--purple)">Division A</h4>
@@ -92,12 +145,22 @@ views.setup = async function () {
           ${rows("b", entriesB)}</div>
       </div>
       ${sizeNote}
-      ${locked ? '<p class="muted">🔒 Teams locked (fixtures generated). Use “Start over” to change them.</p>'
+      ${locked ? '<p class="muted">🔒 Teams locked. Use “Start over” to change them.</p>'
                : '<br><button class="btn" id="saveBtn">Save teams</button>'}
     </div>
 
     <div class="card" style="margin-top:18px">
-      <h3>2. Generate the season</h3>
+      <h3>2. Rivalries <span class="muted" style="font-size:13px">(derbies - optional)</span></h3>
+      ${canRiv
+        ? `<p class="muted">Pair everyone up (each player once). Each pair plays one extra
+             "derby" game; the other 2 extra games stay random.</p>
+           ${rivStatus}${rivRows}
+           ${locked ? "" : '<button class="btn small" id="rivRandom">Randomise pairs</button> <button class="btn" id="rivSave" style="margin-left:6px">Save rivalries</button>'}`
+        : '<p class="empty">Save both divisions (equal size) first, then you can set rivalries.</p>'}
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>3. Generate the season</h3>
       ${locked
         ? `<p>🔒 <b>Fixtures generated and locked.</b> The schedule is fixed for the season.</p>
            <button class="btn green" id="syncBtn">Sync latest results</button>`
@@ -105,6 +168,11 @@ views.setup = async function () {
            <button class="btn green" id="genBtn" ${st.can_generate ? "" : "disabled"}>Generate fixtures (one time only)</button>`}
       ${st.has_season ? '<button class="btn pink small" id="resetBtn" style="margin-left:8px">Start over</button>' : ""}
     </div>`;
+
+  el("logoutBtn").onclick = () => {
+    adminAuth = null; sessionStorage.removeItem("adminAuth");
+    toast("Logged out"); refreshBadge(); views.setup();
+  };
 
   const collect = (side) => {
     const out = [];
@@ -117,7 +185,6 @@ views.setup = async function () {
     return out;
   };
 
-  // Live name lookup: as soon as an id is entered, fetch and show the manager.
   async function lookupName(side, i) {
     const inp = el(`${side}-id-${i}`), span = el(`${side}-nm-${i}`);
     if (!inp || !span) return;
@@ -148,8 +215,32 @@ views.setup = async function () {
     } catch (e) { btn.disabled = false; btn.textContent = "Save teams"; return toast(e.message, true); }
     toast(`Saved ${a.length} + ${b.length} teams`); refreshBadge(); views.setup();
   };
+
+  if (el("rivRandom")) el("rivRandom").onclick = () => {
+    const ids = allPlayers.map((p) => p.entry_id);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    for (let i = 0; i < npairs; i++) {
+      el(`riv-a-${i}`).value = ids[2 * i]; el(`riv-b-${i}`).value = ids[2 * i + 1];
+    }
+  };
+  if (el("rivSave")) el("rivSave").onclick = async () => {
+    const pairs = [], seen = new Set();
+    for (let i = 0; i < npairs; i++) {
+      const a = Number(el(`riv-a-${i}`).value), b = Number(el(`riv-b-${i}`).value);
+      if (a === b) return toast(`Pair ${i + 1}: a player can't be their own rival`, true);
+      if (seen.has(a) || seen.has(b)) return toast(`A player is picked twice (pair ${i + 1})`, true);
+      seen.add(a); seen.add(b); pairs.push([a, b]);
+    }
+    try { await api("/api/custom/rivalries", { method: "POST", body: JSON.stringify({ pairs }) }); }
+    catch (e) { return toast(e.message, true); }
+    toast("Rivalries saved"); refreshBadge(); views.setup();
+  };
+
   if (el("genBtn")) el("genBtn").onclick = async () => {
-    if (!confirm("Generate the fixture list? This is random and can only be done ONCE - it locks the schedule for the season.")) return;
+    const rivMsg = st.rivalries_valid ? "Rivalries are set." : "No rivalries set (all 3 extra games random).";
+    if (!confirm(`Generate the fixture list? ${rivMsg}\n\nThis is random and can only be done ONCE - it locks the schedule.`)) return;
     try {
       await api("/api/custom/generate", { method: "POST" });
       await api("/api/custom/sync-points", { method: "POST" });
@@ -162,7 +253,7 @@ views.setup = async function () {
     catch (e) { toast(e.message, true); }
   };
   if (el("resetBtn")) el("resetBtn").onclick = async () => {
-    if (!confirm("Start over? This clears the schedule, results and all teams for the season.")) return;
+    if (!confirm("Start over? This clears the schedule, results, rivalries and all teams.")) return;
     try { await api("/api/custom/reset", { method: "POST" }); }
     catch (e) { return toast(e.message, true); }
     toast("Reset - enter your teams again"); refreshBadge(); views.setup();
@@ -171,10 +262,21 @@ views.setup = async function () {
 
 // ============================ FIXTURES ====================================
 views.fixtures = async function () {
-  const helpBox = help("Fixtures - who plays who, every gameweek",
-    `<p>The frozen 35-gameweek schedule. Each team plays once a week: your division
-      rivals 3× each, the other division 2× each, plus 3 random extra games.
-      <b>GW36-38 aren't here</b> - those are the playoffs, shown on the League tab.</p>`);
+  const helpBox = help("League rules",
+    `<ul style="margin:0">
+       <li><b>14 managers, 2 divisions of 7.</b> Each division drafts separately on the
+         official FPL Draft site.</li>
+       <li><b>35-game regular season</b> (GW1-35), one match each week:
+         <ul>
+           <li>each team in your division <b>×3</b> (18 games)</li>
+           <li>each team in the other division <b>×2</b> (14 games)</li>
+           <li><b>3 extra games</b> - one derby vs your rival, plus 2 random</li>
+         </ul></li>
+       <li><b>Scoring:</b> head-to-head - win 3, draw 1. Ranked on points, then total FPL
+         points scored (PF). Only finished gameweeks count.</li>
+       <li><b>Playoffs (GW36-38):</b> top 4 overall. Semis #1v#4 &amp; #2v#3 aggregated over
+         GW36+37; final on GW38. Ties broken by total season points.</li>
+     </ul>`);
   const data = await api("/api/custom/fixtures");
   if (!data.gameweeks.length) {
     app().innerHTML = helpBox + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
@@ -189,20 +291,21 @@ views.fixtures = async function () {
 
 // ============================ LEAGUE ======================================
 views.league = async function () {
+  const isAdmin = await ensureAdmin();
   const helpBox = help("League - standings and the playoffs",
     `<p>Each division's head-to-head table (win 3, draw 1; ranked on points, then total
       FPL points scored). The <b>top 4 overall</b> qualify for the knockout, highlighted
       in green. Below, the bracket: semi-finals over GW36+GW37 (aggregate), final on GW38.</p>
-     <p>Hit <b>Sync latest results</b> to pull the newest gameweek scores.</p>`);
+     ${isAdmin ? "<p>Hit <b>Sync latest results</b> to pull the newest gameweek scores.</p>" : ""}`);
   app().innerHTML = helpBox + `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0">League</h2>
-      <button class="btn small green" id="syncBtn2">Sync latest results</button>
+      ${isAdmin ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
     </div>
     <div id="tables" style="margin-top:14px"></div>
     <h3 style="margin-top:26px">Playoffs (GW36-38)</h3>
     <div id="bracket"></div>`;
-  el("syncBtn2").onclick = async () => {
+  if (el("syncBtn2")) el("syncBtn2").onclick = async () => {
     try { const r = await api("/api/custom/sync-points", { method: "POST" });
       toast(`Synced ${r.teams} teams`); } catch (e) { return toast(e.message, true); }
     renderTables(); renderBracket();

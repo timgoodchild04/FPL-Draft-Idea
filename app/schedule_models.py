@@ -20,6 +20,18 @@ class Fixture(SQLModel, table=True):
     kind: str = "division"  # "division" or "cross"
 
 
+class Rivalry(SQLModel, table=True):
+    """A derby pairing (two teams who play an extra 'rivalry' game)."""
+
+    __table_args__ = (
+        UniqueConstraint("season_id", "entry_a", "entry_b", name="uq_rivalry"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    season_id: int = Field(foreign_key="season.id", index=True)
+    entry_a: int
+    entry_b: int
+
+
 class EntryPoints(SQLModel, table=True):
     """A team's actual FPL points for one gameweek (from /entry/{id}/history)."""
 
