@@ -378,16 +378,17 @@ views.fixtures = async function () {
 // ============================ LEAGUE ======================================
 views.league = async function () {
   const isAdmin = await ensureAdmin();
-  const helpBox = help("League - standings and the playoffs",
-    `<p>Each division's head-to-head table (win 3, draw 1; ranked on points, then total
-      FPL points scored). The <b>top 4 overall</b> qualify for the knockout, highlighted
-      in green. Below, the bracket: semi-finals over GW36+GW37 (aggregate), final on GW38.</p>
-     ${isAdmin ? "<p>Hit <b>Sync latest results</b> to pull the newest gameweek scores.</p>" : ""}`);
-  app().innerHTML = helpBox + `
+  const rulesPanel = `<div class="rules">
+      <div class="rule"><div class="rule-ic">📊</div><div><b>Reading the table</b>
+        <p>Head-to-head: win 3, draw 1. Ranked on points, then total FPL points (PF). Top 4 overall (highlighted) reach the playoffs.</p></div></div>
+      <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
+        <p>Semi-finals #1v#4 &amp; #2v#3 aggregated over GW36+37, then the final on GW38.</p></div></div>
+    </div>`;
+  app().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0">League</h2>
       ${isAdmin ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
-    </div>
+    </div>` + rulesPanel + `
     <div id="tables" style="margin-top:14px"></div>
     <h3 style="margin-top:26px">Playoffs (GW36-38)</h3>
     <div id="bracket"></div>`;
