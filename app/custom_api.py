@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlmodel import Session, delete, select
 
 from app import custom_league, fpldraft_client, setup_league
@@ -261,7 +262,7 @@ def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
     with Session(ENGINE) as s:
         season = _ensure_season(s)
         if s.exec(select(Fixture).where(Fixture.season_id == season.id).limit(1)).first():
-            raise HTTPException(400, "Fixtures already generated and locked - use 'Start over' to change teams.")
+            raise HTTPException(400, "Fixtures already generated and locked - start a new season to change teams.")
         div_a, div_b = _ensure_divisions(s, season)
         for div, lst in ((div_a, a), (div_b, b)):
             s.exec(delete(MirrorEntry).where(MirrorEntry.division_id == div.id))
@@ -287,7 +288,7 @@ def set_rivalries(body: RivalriesIn, _admin: bool = Depends(require_admin)) -> d
         if season is None:
             raise HTTPException(400, "Set up your teams first.")
         if s.exec(select(Fixture).where(Fixture.season_id == season.id).limit(1)).first():
-            raise HTTPException(400, "Fixtures already generated and locked - use 'Start over' to change rivalries.")
+            raise HTTPException(400, "Fixtures already generated and locked - start a new season to change rivalries.")
         team_ids = {e.entry_id for d in _stage1_divisions(s, season)
                     for e in s.exec(select(MirrorEntry).where(MirrorEntry.division_id == d.id)).all()}
         flat = [x for pair in body.pairs for x in pair]
@@ -319,26 +320,6 @@ def lookup(entry_id: int) -> dict:
         except Exception:
             raise HTTPException(404, f"No FPL Draft team with id {entry_id}.")
     return {"entry_id": entry_id, "name": _entry_name(pub, entry_id)}
-
-
-@current_router.post("/reset")
-def reset(_admin: bool = Depends(require_admin)) -> dict:
-    """Clear fixtures, points and teams for the current season so it can be redone."""
-    with Session(ENGINE) as s:
-        season = _current(s)
-        if season is None:
-            return {"has_season": False}
-        for d in _stage1_divisions(s, season):
-            s.exec(delete(MirrorEntry).where(MirrorEntry.division_id == d.id))
-            s.exec(delete(MirrorLink).where(MirrorLink.division_id == d.id))
-        s.exec(delete(Fixture).where(Fixture.season_id == season.id))
-        s.exec(delete(EntryPoints).where(EntryPoints.season_id == season.id))
-        s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
-        meta = s.get(LeagueMeta, season.id)
-        if meta:
-            s.delete(meta)
-        s.commit()
-        return _status(s, season)
 
 
 @current_router.get("/sample-ids")
@@ -498,23 +479,6 @@ def playoffs(season_id: int | None = None) -> dict:
             return {"ready": False, "reason": str(e)}
 
 
-@current_router.get("/managers")
-def managers() -> list[dict]:
-    """Every manager ever seen (any season), for the Head-to-Head pickers."""
-    with Session(ENGINE) as s:
-        names = custom_league.all_manager_names(s)
-        return [{"entry_id": eid, "name": nm}
-                for eid, nm in sorted(names.items(), key=lambda kv: kv[1].lower())]
-
-
-@current_router.get("/h2h")
-def h2h(a: int, b: int) -> dict:
-    if a == b:
-        raise HTTPException(400, "Pick two different managers.")
-    with Session(ENGINE) as s:
-        return custom_league.head_to_head(s, a, b)
-
-
 @current_router.get("/records")
 def records() -> dict:
     with Session(ENGINE) as s:
@@ -525,3 +489,109 @@ def records() -> dict:
 def trophies() -> list[dict]:
     with Session(ENGINE) as s:
         return custom_league.trophy_cabinet(s)
+
+
+@current_router.get("/manager/{entry_id}")
+def manager_profile(entry_id: int) -> dict:
+    with Session(ENGINE) as s:
+        profile = custom_league.manager_profile(s, entry_id)
+        if profile is None:
+            raise HTTPException(404, f"No manager with entry id {entry_id}.")
+        return profile
+
+
+@current_router.get("/export")
+def export_data(_admin: bool = Depends(require_admin)) -> dict:
+    """Full dump of every season's league data - teams, fixtures, results,
+    rivalries - across the whole history of this app, not just the current
+    season. This is the part of the site that can't be regenerated: the FPL
+    reference data (players/teams/gameweeks) re-syncs on its own from the
+    official API, but nobody else has a copy of your own draft/fixtures/
+    results. Save this somewhere safe as a backup against the site breaking
+    or needing to be re-hosted."""
+    with Session(ENGINE) as s:
+        return {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "seasons": [row.model_dump() for row in s.exec(select(Season)).all()],
+            "divisions": [row.model_dump() for row in s.exec(select(Division)).all()],
+            "mirror_entries": [row.model_dump() for row in s.exec(select(MirrorEntry)).all()],
+            "mirror_links": [row.model_dump() for row in s.exec(select(MirrorLink)).all()],
+            "fixtures": [row.model_dump() for row in s.exec(select(Fixture)).all()],
+            "entry_points": [row.model_dump() for row in s.exec(select(EntryPoints)).all()],
+            "rivalries": [row.model_dump() for row in s.exec(select(Rivalry)).all()],
+            "league_meta": [row.model_dump() for row in s.exec(select(LeagueMeta)).all()],
+        }
+
+
+class ImportIn(BaseModel):
+    seasons: list[dict] = []
+    divisions: list[dict] = []
+    mirror_entries: list[dict] = []
+    mirror_links: list[dict] = []
+    fixtures: list[dict] = []
+    entry_points: list[dict] = []
+    rivalries: list[dict] = []
+    league_meta: list[dict] = []
+
+
+def _resync_pg_sequences(s: Session) -> None:
+    """After inserting rows with explicit (imported) primary keys, Postgres'
+    auto-increment sequences don't know those ids were used - the next normal
+    insert could then collide with one of them. SQLite doesn't need this (it
+    derives the next rowid from MAX(id) itself), so only run it on Postgres."""
+    if ENGINE.dialect.name != "postgresql":
+        return
+    for table, id_col in [("season", "id"), ("division", "id"), ("mirrorentry", "id"),
+                          ("fixture", "id"), ("entrypoints", "id"), ("rivalry", "id")]:
+        s.exec(text(
+            f"SELECT setval(pg_get_serial_sequence('{table}', '{id_col}'), "
+            f"COALESCE((SELECT MAX({id_col}) FROM {table}), 1))"
+        ))
+
+
+@current_router.post("/import")
+def import_data(body: ImportIn, _admin: bool = Depends(require_admin)) -> dict:
+    """Restore a full export, REPLACING every season currently stored - this is
+    disaster recovery (re-hosting from scratch), not a merge. All rows are
+    validated (constructed into their real model types) before anything is
+    touched, so a malformed file is rejected without wiping existing data. The
+    wipe-and-restore itself runs as one transaction, so a failure partway
+    through rolls back completely rather than leaving things half-restored."""
+    if not body.seasons:
+        raise HTTPException(400, "This doesn't look like a Branksbowl export - no seasons found.")
+    try:
+        seasons = [Season(**row) for row in body.seasons]
+        divisions = [Division(**row) for row in body.divisions]
+        mirror_entries = [MirrorEntry(**row) for row in body.mirror_entries]
+        mirror_links = [MirrorLink(**row) for row in body.mirror_links]
+        fixtures = [Fixture(**row) for row in body.fixtures]
+        entry_points = [EntryPoints(**row) for row in body.entry_points]
+        rivalries = [Rivalry(**row) for row in body.rivalries]
+        league_meta = [LeagueMeta(**row) for row in body.league_meta]
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"Malformed export file: {e}")
+
+    with Session(ENGINE) as s:
+        try:
+            for model in (MirrorEntry, MirrorLink, Fixture, EntryPoints, Rivalry, LeagueMeta, Division, Season):
+                s.exec(delete(model))
+            for row in seasons:
+                s.add(row)
+            s.flush()  # parents hit the DB (within this same transaction) before children reference them
+            for row in divisions:
+                s.add(row)
+            s.flush()
+            for row in (*mirror_entries, *mirror_links):
+                s.add(row)
+            s.flush()
+            for row in (*fixtures, *entry_points, *rivalries, *league_meta):
+                s.add(row)
+            s.flush()
+            _resync_pg_sequences(s)
+            s.commit()  # single commit - anything failing above rolls back the whole restore
+        except Exception as e:
+            s.rollback()
+            raise HTTPException(400, f"Import failed, nothing was changed: {e}")
+
+    return {"imported": True, "seasons": len(seasons), "divisions": len(divisions),
+            "fixtures": len(fixtures), "entry_points": len(entry_points)}

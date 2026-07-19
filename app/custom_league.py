@@ -210,15 +210,31 @@ FINAL_GW = 38         # final decided on this gameweek
 
 
 def playoffs(session: Session, season: Season) -> dict:
-    """Top-4 knockout: semis (1v4, 2v3) aggregated over GW36-37, final on GW38.
+    """Top-2-per-division knockout: cross-division semis aggregated over
+    GW36-37, final on GW38.
 
-    Seeded from the combined regular-season table. Ties in a tie broken by the
-    higher seed (which reflects total season points, the agreed tie-break).
+    Qualifiers are each division's top 2 (not the top 4 of the combined
+    table), so one strong division can no longer shut the other out of the
+    playoffs entirely. Semis are cross-division - a division's winner faces
+    the OTHER division's runner-up - so the all-four-qualifiers-from-one-
+    division scenario the old combined-top-4 format allowed can't happen, and
+    the two division winners can only meet in the final. Ties are broken by
+    true combined-table rank (not division rank), so the tie-break still
+    reflects who actually had the better regular season, regardless of which
+    division-slot they qualified through.
     """
-    combined = standings(session, season)["combined"]
-    if len(combined) < 4:
-        return {"ready": False, "reason": "Need at least 4 teams with a generated schedule."}
-    seeds = combined[:4]  # ranked rows: rank, manager, entry_id, division
+    table = standings(session, season)
+    div_a, div_b = table["division_a"], table["division_b"]
+    if len(div_a) < 2 or len(div_b) < 2:
+        return {"ready": False, "reason": "Each division needs at least 2 teams with a generated schedule."}
+    overall_rank = {r["entry_id"]: r["rank"] for r in table["combined"]}
+
+    def qualifier(row: dict) -> dict:
+        return {**row, "seed_label": f"{row['division']}{row['rank']}",
+                "overall_rank": overall_rank[row["entry_id"]]}
+
+    a1, a2 = qualifier(div_a[0]), qualifier(div_a[1])
+    b1, b2 = qualifier(div_b[0]), qualifier(div_b[1])
 
     points = {(p.entry_id, p.gameweek): p.points
               for p in session.exec(select(EntryPoints).where(EntryPoints.season_id == season.id)).all()}
@@ -229,19 +245,23 @@ def playoffs(session: Session, season: Season) -> dict:
         total = sum(points.get((entry_id, gw), 0) for gw in gws)
         return total, done
 
+    def order(x: dict, y: dict) -> tuple[dict, dict]:
+        """Whichever of the pair actually had the better regular season goes first."""
+        return (x, y) if x["overall_rank"] <= y["overall_rank"] else (y, x)
+
     def tie(high: dict, low: dict, gws: list[int]) -> dict:
         hp, hd = score(high["entry_id"], gws)
         lp, ld = score(low["entry_id"], gws)
         done = hd and ld
         winner = None
         if done:
-            winner = high if hp >= lp else low  # equal -> higher seed (high)
+            winner = high if hp >= lp else low  # equal -> higher (better) seed
         return {"high_seed": high, "low_seed": low, "gameweeks": gws,
                 "high_points": hp, "low_points": lp,
                 "status": "complete" if done else "pending", "winner": winner}
 
-    sf1 = tie(seeds[0], seeds[3], SEMI_GWS)   # #1 v #4
-    sf2 = tie(seeds[1], seeds[2], SEMI_GWS)   # #2 v #3
+    sf1 = tie(*order(a1, b2), SEMI_GWS)   # Division A's #1 v Division B's #2
+    sf2 = tie(*order(b1, a2), SEMI_GWS)   # Division B's #1 v Division A's #2
 
     final = {"gameweeks": [FINAL_GW], "status": "pending",
              "team_a": None, "team_b": None, "winner": None}
@@ -253,18 +273,18 @@ def playoffs(session: Session, season: Season) -> dict:
         done = ad and bd
         winner = None
         if done:
-            winner = a if ap > bp else b if bp > ap else (a if a["rank"] < b["rank"] else b)
+            winner = a if ap > bp else b if bp > ap else (a if a["overall_rank"] < b["overall_rank"] else b)
         final = {"gameweeks": [FINAL_GW], "team_a": a, "team_b": b,
                  "a_points": ap, "b_points": bp,
                  "status": "complete" if done else "pending", "winner": winner}
         champion = winner
 
-    return {"ready": True, "seeds": seeds,
+    return {"ready": True, "seeds": [a1, b1, a2, b2],
             "semis": [dict(name="Semi-final 1", **sf1), dict(name="Semi-final 2", **sf2)],
             "final": final, "champion": champion}
 
 
-# --- head-to-head history --------------------------------------------------
+# --- shared manager lookup --------------------------------------------------
 def all_manager_names(session: Session) -> dict[int, str]:
     """entry_id -> manager_name, from every MirrorEntry ever recorded.
 
@@ -276,57 +296,6 @@ def all_manager_names(session: Session) -> dict[int, str]:
         select(MirrorEntry).where(MirrorEntry.entry_id != None).order_by(MirrorEntry.id)  # noqa: E711
     ).all()
     return {e.entry_id: e.manager_name for e in rows}  # later rows win on repeats
-
-
-def head_to_head(session: Session, entry_a: int, entry_b: int) -> dict:
-    """All-time record between two managers, across every season they've met in."""
-    names = all_manager_names(session)
-    a_wins = b_wins = draws = 0
-    meetings: list[dict] = []
-
-    for season in session.exec(select(Season).order_by(Season.id)).all():
-        fixtures = session.exec(
-            select(Fixture).where(
-                Fixture.season_id == season.id,
-                Fixture.home_entry.in_([entry_a, entry_b]),
-                Fixture.away_entry.in_([entry_a, entry_b]),
-            )
-        ).all()
-        if not fixtures:
-            continue
-        finished = finished_gameweeks(session, season)
-        points = {
-            (p.entry_id, p.gameweek): p.points
-            for p in session.exec(
-                select(EntryPoints).where(
-                    EntryPoints.season_id == season.id,
-                    EntryPoints.entry_id.in_([entry_a, entry_b]),
-                )
-            ).all()
-        }
-        for f in fixtures:
-            if f.gameweek not in finished:
-                continue
-            if (f.home_entry, f.gameweek) not in points or (f.away_entry, f.gameweek) not in points:
-                continue
-            ph, pa = points[(f.home_entry, f.gameweek)], points[(f.away_entry, f.gameweek)]
-            a_pts, b_pts = (ph, pa) if f.home_entry == entry_a else (pa, ph)
-            if a_pts > b_pts:
-                a_wins += 1
-            elif b_pts > a_pts:
-                b_wins += 1
-            else:
-                draws += 1
-            meetings.append({"season_id": season.id, "season_name": season.name,
-                             "gameweek": f.gameweek, "a_points": a_pts, "b_points": b_pts})
-
-    meetings.sort(key=lambda m: (m["season_id"], m["gameweek"]), reverse=True)
-    return {
-        "a": {"entry_id": entry_a, "name": names.get(entry_a, f"Entry {entry_a}")},
-        "b": {"entry_id": entry_b, "name": names.get(entry_b, f"Entry {entry_b}")},
-        "record": {"a_wins": a_wins, "b_wins": b_wins, "draws": draws},
-        "meetings": meetings,
-    }
 
 
 # --- league records / hall of fame -----------------------------------------
@@ -430,3 +399,71 @@ def trophy_cabinet(session: Session) -> list[dict]:
             "runner_up": {"entry_id": runner_up["entry_id"], "name": runner_up["manager"]} if runner_up else None,
         })
     return out
+
+
+# --- manager profile ---------------------------------------------------
+def manager_profile(session: Session, entry_id: int) -> dict | None:
+    """Career W-D-L/PF across every season, plus a gameweek log for the most
+    recent season they've appeared in (current if they're in it, else their
+    last one) - the season log isn't limited to any one selected season since
+    a manager's profile is inherently a cross-season view.
+    """
+    names = all_manager_names(session)
+    if entry_id not in names:
+        return None
+
+    career = {"seasons_played": 0, "wins": 0, "draws": 0, "losses": 0, "points_for": 0}
+    latest_season = None
+    latest_log: list[dict] = []
+
+    for season in session.exec(select(Season).order_by(Season.id)).all():
+        fixtures = session.exec(
+            select(Fixture).where(
+                Fixture.season_id == season.id,
+                (Fixture.home_entry == entry_id) | (Fixture.away_entry == entry_id),
+            )
+        ).all()
+        if not fixtures:
+            continue
+        finished = finished_gameweeks(session, season)
+        points = {
+            (p.entry_id, p.gameweek): p.points
+            for p in session.exec(select(EntryPoints).where(EntryPoints.season_id == season.id)).all()
+        }
+        log: list[dict] = []
+        for f in sorted(fixtures, key=lambda fx: fx.gameweek):
+            if f.gameweek not in finished:
+                continue
+            opp = f.away_entry if f.home_entry == entry_id else f.home_entry
+            if (entry_id, f.gameweek) not in points or (opp, f.gameweek) not in points:
+                continue
+            own, other = points[(entry_id, f.gameweek)], points[(opp, f.gameweek)]
+            result = "W" if own > other else "L" if own < other else "D"
+            career["wins" if result == "W" else "losses" if result == "L" else "draws"] += 1
+            career["points_for"] += own
+            log.append({"gameweek": f.gameweek, "opponent": names.get(opp, f"Entry {opp}"),
+                       "own_points": own, "opp_points": other, "result": result})
+        if log:
+            career["seasons_played"] += 1
+        if latest_season is None or season.id >= latest_season.id:
+            latest_season = season
+            latest_log = log
+
+    division = None
+    if latest_season is not None:
+        try:
+            a_entries, b_entries = collect_divisions(session, latest_season)
+            if entry_id in {e.entry_id for e in a_entries}:
+                division = "A"
+            elif entry_id in {e.entry_id for e in b_entries}:
+                division = "B"
+        except ValueError:
+            division = None
+
+    return {
+        "entry_id": entry_id, "name": names[entry_id], "career": career,
+        "season": None if latest_season is None else {
+            "season_id": latest_season.id, "season_name": latest_season.name,
+            "division": division, "log": latest_log,
+        },
+    }
