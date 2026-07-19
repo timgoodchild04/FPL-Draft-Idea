@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, func, select
 
@@ -155,8 +155,23 @@ def favicon() -> FileResponse:
 
 # --- PWA (installable app): manifest + service worker served from root -------
 @app.get("/manifest.json")
-def manifest() -> FileResponse:
-    return FileResponse(STATIC_DIR / "manifest.json", media_type="application/manifest+json")
+def manifest() -> JSONResponse:
+    # Built dynamically so the installed-app name follows the configured league name.
+    from app.settings_models import Setting
+    with Session(ENGINE) as s:
+        row = s.get(Setting, "league_name")
+        name = row.value if row and row.value else "Branksbowl"
+    return JSONResponse({
+        "name": name, "short_name": name,
+        "description": f"{name} - a custom two-division FPL Draft head-to-head league.",
+        "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
+        "background_color": "#0f1729", "theme_color": "#0f1729",
+        "icons": [
+            {"src": "/static/favicon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/favicon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/static/favicon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }, media_type="application/manifest+json")
 
 
 @app.get("/sw.js")

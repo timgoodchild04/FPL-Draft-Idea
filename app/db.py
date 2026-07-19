@@ -44,6 +44,7 @@ def init_db() -> None:
         mirror_models,
         models,
         schedule_models,
+        settings_models,
     )
 
     SQLModel.metadata.create_all(ENGINE)
