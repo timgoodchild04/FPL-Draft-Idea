@@ -7,6 +7,14 @@
   <link rel="icon" href="/static/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
   <link rel="apple-touch-icon" href="/static/favicon-192.png" />
+
+  <!-- installable app (PWA) -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0f1729" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Branksbowl" />
   <script>
     // Applied before the stylesheet paints, so there's no flash of the wrong theme.
     // Dark is the default; a visitor's own toggle choice (saved below) always wins.
@@ -58,5 +66,13 @@
 
   <div id="toast" class="toast"></div>
   <script src="/static/app.js"></script>
+  <script>
+    // Register the service worker so the app is installable and loads offline.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>

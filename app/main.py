@@ -153,4 +153,21 @@ def favicon() -> FileResponse:
     return FileResponse(STATIC_DIR / "favicon.ico")
 
 
+# --- PWA (installable app): manifest + service worker served from root -------
+@app.get("/manifest.json")
+def manifest() -> FileResponse:
+    return FileResponse(STATIC_DIR / "manifest.json", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    # Served from root so its scope covers the whole site; never cached by HTTP
+    # so a new deploy's worker is picked up promptly.
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
