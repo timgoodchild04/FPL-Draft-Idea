@@ -24,6 +24,23 @@ from app.season_api import router as season_router
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="Branksbowl 26/27", version="0.1")
+
+
+@app.middleware("http")
+async def no_cache_for_frontend(request, call_next):
+    """Force the browser to always revalidate index.html/app.js/styles.css.
+
+    Without this, a browser that visited before a deploy can keep serving its
+    cached copy indefinitely (no Cache-Control was set), so UI changes silently
+    don't show up for returning visitors. `no-cache` still lets ETag/Last-Modified
+    conditional requests short-circuit to a cheap 304 when nothing changed.
+    """
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.include_router(draft_router)
 app.include_router(scoring_router)
 app.include_router(season_router)
