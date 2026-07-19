@@ -25,6 +25,15 @@ from app.lineup_models import Lineup
 from app.mirror_models import MirrorEntry, MirrorLink, MirrorMatch
 from app.models import Gameweek
 from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
+from app.settings_models import Setting
+
+LEAGUE_NAME_KEY = "league_name"
+DEFAULT_LEAGUE_NAME = "Branksbowl"
+
+
+def _league_name(s: Session) -> str:
+    row = s.get(Setting, LEAGUE_NAME_KEY)
+    return row.value if row and row.value else DEFAULT_LEAGUE_NAME
 
 router = APIRouter(prefix="/api/seasons", tags=["custom-league"])
 current_router = APIRouter(prefix="/api/custom", tags=["custom-current"])
@@ -167,6 +176,31 @@ def status(season_id: int | None = None) -> dict:
         if season is None:
             return {"has_season": False}
         return _status(s, season)
+
+
+@current_router.get("/settings")
+def get_settings() -> dict:
+    with Session(ENGINE) as s:
+        return {"league_name": _league_name(s)}
+
+
+class SettingsIn(BaseModel):
+    league_name: str
+
+
+@current_router.post("/settings")
+def set_settings(body: SettingsIn, _admin: bool = Depends(require_admin)) -> dict:
+    name = body.league_name.strip()
+    if not name:
+        raise HTTPException(400, "League name can't be empty.")
+    if len(name) > 40:
+        raise HTTPException(400, "League name too long (max 40 characters).")
+    with Session(ENGINE) as s:
+        row = s.get(Setting, LEAGUE_NAME_KEY) or Setting(key=LEAGUE_NAME_KEY)
+        row.value = name
+        s.add(row)
+        s.commit()
+        return {"league_name": name}
 
 
 @current_router.get("/seasons")

@@ -71,6 +71,19 @@ async function maybeRefresh() {
   catch { return false; }
 }
 
+// --- branding: league name drives the header AND the browser tab title ---
+let leagueName = "Branksbowl";
+function applyBranding(name) {
+  leagueName = (name && name.trim()) || "Branksbowl";
+  document.title = leagueName;                       // browser tab
+  const b = document.querySelector(".brand");
+  if (b) b.textContent = leagueName;                 // header top-left
+}
+async function loadBranding() {
+  try { applyBranding((await api("/api/custom/settings")).league_name); }
+  catch { /* keep the default already in the HTML */ }
+}
+
 // --- routing --------------------------------------------------------------
 const views = {};
 let selectedSeasonId = null;  // null = the current (active) season
@@ -305,6 +318,14 @@ views.setup = async function () {
       <button class="btn small" id="logoutBtn">Log out</button>
     </div>
     <div class="card" style="margin-top:12px">
+      <h3 style="margin-top:0">League name</h3>
+      <p class="muted">Shown in the header and the browser tab, for everyone.</p>
+      <div class="row" style="max-width:440px">
+        <div style="flex:2"><input id="leagueNameInput" placeholder="Branksbowl" maxlength="40"></div>
+        <div style="flex:0"><button class="btn" id="saveBrandingBtn">Save name</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <h3 style="margin:0">1. Your two divisions</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -385,6 +406,16 @@ views.setup = async function () {
   el("logoutBtn").onclick = () => {
     adminAuth = null; sessionStorage.removeItem("adminAuth");
     toast("Logged out"); refreshBadge(); views.setup();
+  };
+
+  if (el("leagueNameInput")) el("leagueNameInput").value = leagueName;
+  if (el("saveBrandingBtn")) el("saveBrandingBtn").onclick = async () => {
+    const name = el("leagueNameInput").value.trim();
+    if (!name) return toast("Enter a league name", true);
+    try { await api("/api/custom/settings", { method: "POST", body: JSON.stringify({ league_name: name }) }); }
+    catch (e) { return toast(e.message, true); }
+    applyBranding(name);   // updates header + tab immediately
+    toast("League name saved");
   };
 
   const collect = (side) => {
@@ -691,7 +722,7 @@ views.rules = async function () {
 
   app().innerHTML = `
     <h2>Rules</h2>
-    ${help("How Branksbowl works",
+    ${help(`How ${esc(leagueName)} works`,
       `<p>Drafting, transfers and weekly lineups all happen on the official <b>FPL Draft</b> site -
        nothing is drafted here. This site mirrors each manager's real gameweek points from FPL Draft
        and uses them to run our own custom <b>two-division head-to-head league</b>, complete with its
@@ -1077,6 +1108,7 @@ async function renderManagerProfile() {
 }
 
 // --- boot -----------------------------------------------------------------
+loadBranding();
 initThemeToggle();
 initSetupCog();
 populateMePicker();
