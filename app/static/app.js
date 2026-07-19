@@ -401,6 +401,105 @@ async function renderFixtures() {
   if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
 };
 
+// ============================ RULES =======================================
+views.rules = async function () {
+  const st = await api("/api/custom/status").catch(() => ({ has_season: false }));
+  const sizes = (st.divisions || []).map((d) => d.teams).filter((n) => n > 0);
+  const k = sizes[0] || 7;                 // per-division size (falls back to the planned 7)
+  const teams = k * 2;
+  const divGames = (k - 1) * 3;
+  const crossGames = k * 2;
+  const extra = 3;
+  const totalGws = divGames + crossGames + extra;
+
+  app().innerHTML = `
+    <h2>Rules</h2>
+    ${help("How Branksbowl works",
+      `<p>Drafting, transfers and weekly lineups all happen on the official <b>FPL Draft</b> site -
+       nothing is drafted here. This site mirrors each manager's real gameweek points from FPL Draft
+       and uses them to run our own custom <b>two-division head-to-head league</b>, complete with its
+       own fixture list, standings and end-of-season playoff.</p>`)}
+
+    <div class="rules">
+      <div class="rule"><div class="rule-ic">🏟️</div><div><b>${teams} managers, 2 divisions</b>
+        <p>Division A and Division B, ${k} managers each - each is its own real FPL Draft mini-league, drafted separately.</p></div></div>
+      <div class="rule"><div class="rule-ic">📅</div><div><b>${totalGws}-gameweek season</b>
+        <p>A random schedule, generated once and locked for the rest of the season.</p></div></div>
+      <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
+        <p>Win = 3pts, draw = 1pt, loss = 0. Real FPL points decide who wins each match-up.</p></div></div>
+      <div class="rule"><div class="rule-ic">🏆</div><div><b>Top-4 playoff</b>
+        <p>The top 4 in the combined table go into a knockout, GW36-38.</p></div></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>1. The format</h3>
+      <ul>
+        <li><b>${teams} managers</b> split into two divisions, <b>Division A</b> and <b>Division B</b>, of ${k} each.</li>
+        <li>Each division is a genuine FPL Draft mini-league - drafting, waivers/free agents and each manager's
+          weekly lineup are all managed on the official FPL Draft site, not here.</li>
+        <li>This site links to both leagues by team ID, pulls each manager's real per-gameweek points, and builds
+          the fixtures, tables and playoff bracket that FPL Draft itself doesn't offer.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>2. The season - ${totalGws} gameweeks, one match a week</h3>
+      <p class="muted">Every manager plays exactly one match every gameweek. Over the season each manager faces:</p>
+      <table>
+        <tbody>
+          <tr><td>Each of the ${k - 1} rivals in their own division</td><td class="num">×3</td><td class="num">${divGames} games</td></tr>
+          <tr><td>Each of the ${k} teams in the other division</td><td class="num">×2</td><td class="num">${crossGames} games</td></tr>
+          <tr><td>Extra games</td><td class="num">-</td><td class="num">${extra} games</td></tr>
+          <tr><td><b>Total</b></td><td></td><td class="num"><b>${totalGws} games</b></td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:10px">The ${extra} extra games: if <b>rivalries</b> (derbies) are set up,
+        one is a guaranteed match against your rival; the other two are always drawn at random. With no rivalries
+        set, all ${extra} extras are random. The whole schedule is drawn once, randomly (no team is advantaged),
+        then <b>locked</b> - the only way to redo it is a full "Start over" on Setup, which also wipes the results.</p>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>3. Scoring &amp; standings</h3>
+      <ul>
+        <li>A manager's score for a gameweek is their real total FPL points for that week, pulled straight from
+          the official FPL API via their FPL Draft team - the same score they see on FPL Draft.</li>
+        <li>Match result: higher score wins. <b>Win = 3 points, draw = 1 point, loss = 0 points.</b></li>
+        <li>Only <b>finished</b> gameweeks count towards the table - live/in-progress gameweeks aren't scored yet.</li>
+        <li>Ranking order: <b>head-to-head points</b> first; ties are broken by <b>total FPL points scored all
+          season (PF)</b>.</li>
+        <li>Division A and Division B each get their own table, and everyone also appears in one <b>combined
+          overall table</b> - it's the combined table that decides the playoffs.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>4. Playoffs - gameweeks 36 to 38</h3>
+      <ul>
+        <li>The <b>top 4</b> in the combined overall table qualify, seeded #1-#4.</li>
+        <li><b>Semi-finals:</b> #1 vs #4 and #2 vs #3, aggregated over <b>GW36 + GW37</b> (both gameweeks' points
+          are added together - it isn't decided on a single week).</li>
+        <li><b>Final:</b> the two semi-final winners meet on <b>GW38</b> to decide the champion.</li>
+        <li><b>Tie-break:</b> if a tie is level after its gameweek(s), the <b>higher seed</b> (the team that
+          finished higher in the regular season) goes through.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>5. Setup &amp; admin rules</h3>
+      <ul>
+        <li>The <b>League</b> and <b>Fixtures</b> tabs are open to everyone; only <b>Setup</b> needs an admin login.</li>
+        <li>Each division's FPL Draft team IDs are entered on Setup - both divisions must be the <b>same size</b>,
+          and every ID is checked against FPL Draft before it can be saved.</li>
+        <li><b>Generating fixtures is random and one-time only</b> - once generated, the schedule (and any
+          rivalries) are locked for the season. The only way to change teams or rivalries afterwards is
+          <b>"Start over"</b>, which wipes fixtures, results, rivalries and teams completely.</li>
+        <li>Results refresh automatically for anyone viewing the site once they're more than 30 minutes old; an
+          admin can also force an immediate sync from Setup or League.</li>
+      </ul>
+    </div>`;
+};
+
 // ============================ LEAGUE ======================================
 views.league = async function () {
   const isAdmin = await ensureAdmin();
