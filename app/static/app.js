@@ -120,6 +120,7 @@ async function populateSeasonPicker() {
   sel.onchange = () => {
     const chosen = seasonsCache.find((s) => String(s.id) === sel.value);
     selectedSeasonId = chosen && !chosen.is_current ? chosen.id : null;
+    populateMePicker();  // refresh the team list for the newly-selected season
     const active = document.querySelector("#tabs button.active");
     if (active) setView(active.dataset.view);
   };
@@ -130,7 +131,7 @@ async function populateMePicker() {
   if (!sel) return;
   let players = [];
   try {
-    const st = await api("/api/custom/status");
+    const st = await api(withSeason("/api/custom/status"));
     if (st.divisions) players = st.divisions.flatMap((d) => d.entries || []);
   } catch { /* leave empty */ }
   sel.innerHTML = '<option value="">Pick your team…</option>' +
