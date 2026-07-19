@@ -20,8 +20,9 @@ from sqlmodel import Session, delete, select
 
 from app import custom_league, fpldraft_client, setup_league
 from app.db import ENGINE
-from app.league_models import Division, Season
-from app.mirror_models import MirrorEntry, MirrorLink
+from app.league_models import Division, DivisionMembership, DraftPick, RosterSlot, Season
+from app.lineup_models import Lineup
+from app.mirror_models import MirrorEntry, MirrorLink, MirrorMatch
 from app.models import Gameweek
 from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
 
@@ -202,19 +203,21 @@ def new_season(body: NewSeasonIn = NewSeasonIn(), _admin: bool = Depends(require
 
 def _purge_season(s: Session, season: Season) -> None:
     """Permanently delete every row belonging to a season, including the season
-    itself. Deletes children before parents so this is safe under Postgres'
-    enforced foreign keys, not just SQLite's unenforced ones."""
-    for d in s.exec(select(Division).where(Division.season_id == season.id)).all():
-        s.exec(delete(MirrorEntry).where(MirrorEntry.division_id == d.id))
-        s.exec(delete(MirrorLink).where(MirrorLink.division_id == d.id))
-        s.delete(d)
+    itself. Children are cleared before their parents (all via bulk deletes, in
+    order) so this is safe under Postgres' enforced foreign keys - SQLite doesn't
+    enforce them, so a partial delete only shows up once hosted."""
+    div_ids = [d.id for d in
+               s.exec(select(Division).where(Division.season_id == season.id)).all()]
+    if div_ids:
+        for tbl in (MirrorEntry, MirrorLink, MirrorMatch,
+                    DivisionMembership, DraftPick, RosterSlot, Lineup):
+            s.exec(delete(tbl).where(tbl.division_id.in_(div_ids)))
+    s.exec(delete(Division).where(Division.season_id == season.id))
     s.exec(delete(Fixture).where(Fixture.season_id == season.id))
     s.exec(delete(EntryPoints).where(EntryPoints.season_id == season.id))
     s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
-    meta = s.get(LeagueMeta, season.id)
-    if meta:
-        s.delete(meta)
-    s.delete(season)
+    s.exec(delete(LeagueMeta).where(LeagueMeta.season_id == season.id))
+    s.exec(delete(Season).where(Season.id == season.id))
 
 
 @current_router.delete("/seasons/{season_id}")
