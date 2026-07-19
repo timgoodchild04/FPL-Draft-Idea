@@ -243,16 +243,6 @@ async function refreshBadge() {
 // ============================ SETUP =======================================
 const ROSTER_ROWS = 7;
 
-// A random valid derby pairing: every player in exactly one pair (a perfect
-// matching), so the fixtures stay balanced and no one is left out or doubled up.
-function randomPairing(players, npairs) {
-  const ids = players.map((p) => p.entry_id);
-  for (let i = ids.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]];
-  }
-  return Array.from({ length: npairs }, (_, i) => ({ a: ids[2 * i], b: ids[2 * i + 1] }));
-}
-
 async function ensureAdmin() {
   if (!adminAuth) return false;
   try { await api("/api/custom/auth-check"); return true; }
@@ -301,12 +291,10 @@ views.setup = async function () {
   }
   if (token !== renderToken) return;
   const archivedSeasons = seasons.filter((sn) => !sn.is_current);
-  const helpBox = help("Setup - enter teams, set rivalries, then generate",
+  const helpBox = help("Setup - enter teams, then generate",
     `<ol>
        <li><b>Team IDs</b> - put 7 per division (the number in a team's URL). Names are
          pulled from the site automatically; invalid ids are rejected on save.</li>
-       <li><b>Rivalries</b> - optionally pair everyone into derbies; each pair plays an
-         extra game. The other 2 extra games are random.</li>
        <li><b>Generate fixtures</b> - builds the random 35-gameweek schedule and <b>locks
          it</b> for the season (one time only). To redo it, start a new season instead.</li>
      </ol>`);
@@ -331,29 +319,6 @@ views.setup = async function () {
   let sizeNote = "";
   if (st.both_filled && !st.sizes_equal)
     sizeNote = `<p class="down">⚠ The divisions have different sizes (${divs[0].teams} vs ${divs[1].teams}). They must be equal to generate fixtures.</p>`;
-
-  // --- rivalries section ---
-  const canRiv = st.both_filled && st.sizes_equal;
-  const npairs = Math.floor(allPlayers.length / 2);
-  const rivPrefill = st.rivalries || [];
-  const savedValid = st.rivalries_valid && rivPrefill.length === npairs;
-  // With nothing valid saved, seed a random *valid* pairing (each player exactly
-  // once) rather than letting every dropdown default to the first player.
-  const rivPairs = !canRiv ? [] : (savedValid ? rivPrefill.map((r) => ({ a: r.a, b: r.b }))
-                                              : randomPairing(allPlayers, npairs));
-  const optsFor = (selId) => allPlayers.map((p) =>
-    `<option value="${p.entry_id}" ${selId == p.entry_id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-  const rivRows = canRiv ? Array.from({ length: npairs }, (_, i) => {
-    const pr = rivPairs[i] || {};
-    return `<div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
-        <div style="flex:1"><select id="riv-a-${i}" ${locked ? "disabled" : ""}>${optsFor(pr.a)}</select></div>
-        <div style="flex:0;color:var(--muted)">vs</div>
-        <div style="flex:1"><select id="riv-b-${i}" ${locked ? "disabled" : ""}>${optsFor(pr.b)}</select></div>
-      </div>`;
-  }).join("") : "";
-  const rivStatus = !canRiv ? "" : savedValid
-    ? '<p class="up">✅ Rivalries saved - every player has exactly one derby.</p>'
-    : '<p class="muted">A random pairing is suggested below (everyone appears once). Tweak it if you like, then <b>Save rivalries</b> - or leave it unsaved and all 3 extra games are random.</p>';
 
   app().innerHTML = helpBox + `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -385,17 +350,7 @@ views.setup = async function () {
     </div>
 
     <div class="card" style="margin-top:18px">
-      <h3>2. Rivalries <span class="muted" style="font-size:13px">(derbies - optional)</span></h3>
-      ${canRiv
-        ? `<p class="muted">Pair everyone up (each player once). Each pair plays one extra
-             "derby" game; the other 2 extra games stay random.</p>
-           ${rivStatus}${rivRows}
-           ${locked ? "" : '<div class="btns"><button class="btn" id="rivRandom">Randomise pairs</button><button class="btn green" id="rivSave">Save rivalries</button></div>'}`
-        : '<p class="empty">Save both divisions (equal size) first, then you can set rivalries.</p>'}
-    </div>
-
-    <div class="card" style="margin-top:18px">
-      <h3>3. Generate the season</h3>
+      <h3>2. Generate the season</h3>
       ${locked
         ? "<p>🔒 <b>Fixtures generated and locked.</b> The schedule is fixed for the season.</p>"
         : '<p class="muted">Enabled once both divisions are saved and equal size.</p>'}
@@ -428,7 +383,7 @@ views.setup = async function () {
 
     ${archivedSeasons.length ? `<div class="card" style="margin-top:18px">
       <h3>Finished seasons</h3>
-      <p class="muted">Deleting a season removes its fixtures, results and rivalries for good -
+      <p class="muted">Deleting a season removes its fixtures and results for good -
         there's no undo.</p>
       <table><tbody>${archivedSeasons.map((sn) => `<tr>
           <td>${esc(sn.name)}</td>
@@ -440,7 +395,7 @@ views.setup = async function () {
 
     <div class="card" style="margin-top:18px">
       <h3>Backup</h3>
-      <p class="muted">Downloads every season's teams, fixtures, results and rivalries as a JSON file - the
+      <p class="muted">Downloads every season's teams, fixtures and results as a JSON file - the
         part of this site that can't be regenerated if it ever breaks or needs re-hosting elsewhere. FPL
         reference data (players, teams, gameweeks) re-syncs on its own and doesn't need backing up.</p>
       <div class="btns"><button class="btn small" id="exportBtn">⬇️ Export data</button></div>
@@ -577,31 +532,8 @@ views.setup = async function () {
     toast(`Saved ${a.length} + ${b.length} teams`); refreshBadge(); views.setup();
   };
 
-  if (el("rivRandom")) el("rivRandom").onclick = () => {
-    const ids = allPlayers.map((p) => p.entry_id);
-    for (let i = ids.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]];
-    }
-    for (let i = 0; i < npairs; i++) {
-      el(`riv-a-${i}`).value = ids[2 * i]; el(`riv-b-${i}`).value = ids[2 * i + 1];
-    }
-  };
-  if (el("rivSave")) el("rivSave").onclick = async () => {
-    const pairs = [], seen = new Set();
-    for (let i = 0; i < npairs; i++) {
-      const a = Number(el(`riv-a-${i}`).value), b = Number(el(`riv-b-${i}`).value);
-      if (a === b) return toast(`Pair ${i + 1}: a player can't be their own rival`, true);
-      if (seen.has(a) || seen.has(b)) return toast(`A player is picked twice (pair ${i + 1})`, true);
-      seen.add(a); seen.add(b); pairs.push([a, b]);
-    }
-    try { await api("/api/custom/rivalries", { method: "POST", body: JSON.stringify({ pairs }) }); }
-    catch (e) { return toast(e.message, true); }
-    toast("Rivalries saved"); refreshBadge(); views.setup();
-  };
-
   if (el("genBtn")) el("genBtn").onclick = async () => {
-    const rivMsg = st.rivalries_valid ? "Rivalries are set." : "No rivalries set (all 3 extra games random).";
-    if (!confirm(`Generate the fixture list? ${rivMsg}\n\nThis is random and can only be done ONCE - it locks the schedule.`)) return;
+    if (!confirm("Generate the fixture list? It's random and can only be done ONCE - it locks the schedule for the season.")) return;
     try {
       await api("/api/custom/generate", { method: "POST" });
       await api("/api/custom/sync-points", { method: "POST" });
@@ -626,7 +558,7 @@ views.setup = async function () {
     btn.onclick = async () => {
       const id = btn.dataset.delSeason;
       const name = (archivedSeasons.find((sn) => String(sn.id) === id) || {}).name || `season ${id}`;
-      if (!confirm(`Permanently delete "${name}"? This removes its fixtures, results and rivalries `
+      if (!confirm(`Permanently delete "${name}"? This removes its fixtures and results `
         + `for good - there's no undo.`)) return;
       try { await api(`/api/custom/seasons/${id}`, { method: "DELETE" }); }
       catch (e) { return toast(e.message, true); }
@@ -660,8 +592,8 @@ views.setup = async function () {
   if (el("importBtn")) el("importBtn").onclick = async () => {
     const file = el("importFile").files[0];
     if (!file) return toast("Choose an export file first", true);
-    if (!confirm("This permanently replaces ALL current league data - every season, fixture, result and "
-      + "rivalry - with the contents of this file. There's no undo. Continue?")) return;
+    if (!confirm("This permanently replaces ALL current league data - every season, fixture and result "
+      + "- with the contents of this file. There's no undo. Continue?")) return;
     let parsed;
     try { parsed = JSON.parse(await file.text()); }
     catch { return toast("That file isn't valid JSON.", true); }
@@ -719,7 +651,7 @@ async function renderFixtures() {
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
         <p>14 managers in two divisions of 7, each drafted separately on FPL Draft.</p></div></div>
       <div class="rule"><div class="rule-ic">📅</div><div><b>35-game season</b>
-        <p>One match a week: your division ×3, the other division ×2, plus 3 extras (one derby + two random).</p></div></div>
+        <p>One match a week: your division ×3, the other division ×2, plus 3 random extra games.</p></div></div>
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win 3, draw 1. Ranked on points, then total FPL points (PF). Only finished gameweeks count.</p></div></div>
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
@@ -823,15 +755,14 @@ views.rules = async function () {
       <p class="muted">Every manager plays exactly one match every gameweek. Over the season each manager faces:</p>
       <table>
         <tbody>
-          <tr><td>Each of the ${k - 1} rivals in their own division</td><td class="num">×3</td><td class="num">${divGames} games</td></tr>
+          <tr><td>Each of the ${k - 1} others in their own division</td><td class="num">×3</td><td class="num">${divGames} games</td></tr>
           <tr><td>Each of the ${k} teams in the other division</td><td class="num">×2</td><td class="num">${crossGames} games</td></tr>
           <tr><td>Extra games</td><td class="num">-</td><td class="num">${extra} games</td></tr>
           <tr><td><b>Total</b></td><td></td><td class="num"><b>${totalGws} games</b></td></tr>
         </tbody>
       </table>
-      <p class="muted" style="margin-top:10px">The ${extra} extra games: if <b>rivalries</b> (derbies) are set up,
-        one is a guaranteed match against your rival; the other two are always drawn at random. With no rivalries
-        set, all ${extra} extras are random. The whole schedule is drawn once, randomly (no team is advantaged),
+      <p class="muted" style="margin-top:10px">The ${extra} extra games are drawn at random. The whole schedule is
+        drawn once, randomly (no team is advantaged),
         then <b>locked</b> for the season - the only way to get a fresh schedule is to start a new season
         on Setup, which marks this one finished rather than wiping it.</p>
     </div>
@@ -901,19 +832,18 @@ views.rules = async function () {
           <b>Setup</b> is admin-only, reached via the ⚙️ icon next to the theme toggle rather than a tab.</li>
         <li>Each division's FPL Draft team IDs are entered on Setup - both divisions must be the <b>same size</b>,
           and every ID is checked against FPL Draft before it can be saved.</li>
-        <li><b>Generating fixtures is random and one-time only</b> - once generated, the schedule (and any
-          rivalries) are locked for the season. Before it's generated, teams and rivalries can simply be
-          re-saved to change them.</li>
+        <li><b>Generating fixtures is random and one-time only</b> - once generated, the schedule is
+          locked for the season. Before it's generated, teams can simply be re-saved to change them.</li>
         <li>Once a season's fixtures are locked, an admin can <b>start a new, named season</b>: the current one is
           marked finished (kept, read-only, forever) and a blank Setup opens for the next one. This is now the only way
           to redo a season's teams once fixtures are locked.</li>
         <li>Finished seasons can be <b>permanently deleted</b> from Setup if you want to clear out test data -
-          this removes that season's fixtures, results and rivalries for good and can't be undone. The current
+          this removes that season's fixtures and results for good and can't be undone. The current
           season can't be deleted this way - it has to be finished first.</li>
         <li>Results refresh automatically for anyone viewing the site once they're more than 30 minutes old - or
           every 3 minutes while a gameweek is actually live. An admin can also force an immediate sync from Setup
           or League.</li>
-        <li>Setup has a <b>Backup</b> section to download every season's teams, fixtures, results and rivalries
+        <li>Setup has a <b>Backup</b> section to download every season's teams, fixtures and results
           as a JSON file - worth keeping a recent copy in case the site ever needs re-hosting. It can also
           <b>restore</b> from one of these files, but that replaces all current league data, so it's only
           meant for recovering from data loss, not everyday use.</li>
