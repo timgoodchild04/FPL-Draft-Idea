@@ -236,6 +236,26 @@ def delete_season(season_id: int, _admin: bool = Depends(require_admin)) -> dict
         return {"deleted": season_id}
 
 
+class RenameSeasonIn(BaseModel):
+    name: str
+
+
+@current_router.post("/seasons/{season_id}/rename")
+def rename_season(season_id: int, body: RenameSeasonIn, _admin: bool = Depends(require_admin)) -> dict:
+    """Rename any season (used from Setup to tidy up archived-season names)."""
+    with Session(ENGINE) as s:
+        season = s.get(Season, season_id)
+        if season is None:
+            raise HTTPException(404, f"No season {season_id}")
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "Name can't be empty.")
+        season.name = name
+        s.add(season)
+        s.commit()
+        return {"id": season_id, "name": name}
+
+
 @current_router.post("/teams")
 def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
     """Set each division's roster from team ids. Names are pulled from the site;

@@ -24,7 +24,7 @@ from app.season_api import router as season_router
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Branksbowl 26/27", version="0.1")
+app = FastAPI(title="Branksbowl", version="0.1")
 _STARTED_AT = datetime.now(timezone.utc)
 
 
