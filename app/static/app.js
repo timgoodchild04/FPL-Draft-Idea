@@ -362,7 +362,8 @@ views.setup = async function () {
       <table><tbody>${archivedSeasons.map((sn) => `<tr>
           <td>${esc(sn.name)}</td>
           <td class="muted" style="font-size:12px">archived ${timeAgo(sn.archived_at)}</td>
-          <td class="num"><button class="btn small pink" data-del-season="${sn.id}">Delete</button></td>
+          <td class="num"><button class="btn small" data-rename-season="${sn.id}">Rename</button>
+            <button class="btn small pink" data-del-season="${sn.id}" style="margin-left:6px">Delete</button></td>
         </tr>`).join("")}</tbody></table>
     </div>` : ""}
 
@@ -535,6 +536,18 @@ views.setup = async function () {
       try { await api(`/api/custom/seasons/${id}`, { method: "DELETE" }); }
       catch (e) { return toast(e.message, true); }
       toast("Season deleted"); populateSeasonPicker(); views.setup();
+    };
+  });
+  document.querySelectorAll("[data-rename-season]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.renameSeason;
+      const cur = (archivedSeasons.find((sn) => String(sn.id) === id) || {}).name || "";
+      const name = prompt("Rename season:", cur);
+      if (name === null) return;               // cancelled
+      if (!name.trim()) return toast("Name can't be empty", true);
+      try { await api(`/api/custom/seasons/${id}/rename`, { method: "POST", body: JSON.stringify({ name: name.trim() }) }); }
+      catch (e) { return toast(e.message, true); }
+      toast("Season renamed"); populateSeasonPicker(); views.setup();
     };
   });
   if (el("exportBtn")) el("exportBtn").onclick = async () => {
