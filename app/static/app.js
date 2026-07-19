@@ -243,6 +243,16 @@ async function refreshBadge() {
 // ============================ SETUP =======================================
 const ROSTER_ROWS = 7;
 
+// A random valid derby pairing: every player in exactly one pair (a perfect
+// matching), so the fixtures stay balanced and no one is left out or doubled up.
+function randomPairing(players, npairs) {
+  const ids = players.map((p) => p.entry_id);
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return Array.from({ length: npairs }, (_, i) => ({ a: ids[2 * i], b: ids[2 * i + 1] }));
+}
+
 async function ensureAdmin() {
   if (!adminAuth) return false;
   try { await api("/api/custom/auth-check"); return true; }
@@ -326,20 +336,24 @@ views.setup = async function () {
   const canRiv = st.both_filled && st.sizes_equal;
   const npairs = Math.floor(allPlayers.length / 2);
   const rivPrefill = st.rivalries || [];
+  const savedValid = st.rivalries_valid && rivPrefill.length === npairs;
+  // With nothing valid saved, seed a random *valid* pairing (each player exactly
+  // once) rather than letting every dropdown default to the first player.
+  const rivPairs = !canRiv ? [] : (savedValid ? rivPrefill.map((r) => ({ a: r.a, b: r.b }))
+                                              : randomPairing(allPlayers, npairs));
   const optsFor = (selId) => allPlayers.map((p) =>
     `<option value="${p.entry_id}" ${selId == p.entry_id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
   const rivRows = canRiv ? Array.from({ length: npairs }, (_, i) => {
-    const pr = rivPrefill[i] || {};
+    const pr = rivPairs[i] || {};
     return `<div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
         <div style="flex:1"><select id="riv-a-${i}" ${locked ? "disabled" : ""}>${optsFor(pr.a)}</select></div>
         <div style="flex:0;color:var(--muted)">vs</div>
         <div style="flex:1"><select id="riv-b-${i}" ${locked ? "disabled" : ""}>${optsFor(pr.b)}</select></div>
       </div>`;
   }).join("") : "";
-  const rivStatus = !canRiv ? "" : st.rivalries_valid
-    ? '<p class="up">✅ Rivalries set - every player has one derby.</p>'
-    : (rivPrefill.length ? '<p class="down">⚠ Rivalries incomplete - save a full set or leave blank for all-random extras.</p>'
-                         : '<p class="muted">Not set - all 3 extra games will be random.</p>');
+  const rivStatus = !canRiv ? "" : savedValid
+    ? '<p class="up">✅ Rivalries saved - every player has exactly one derby.</p>'
+    : '<p class="muted">A random pairing is suggested below (everyone appears once). Tweak it if you like, then <b>Save rivalries</b> - or leave it unsaved and all 3 extra games are random.</p>';
 
   app().innerHTML = helpBox + `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
