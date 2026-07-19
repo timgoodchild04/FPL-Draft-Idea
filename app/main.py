@@ -5,6 +5,7 @@ Run: uvicorn app.main:app --reload
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Query
@@ -24,6 +25,7 @@ from app.season_api import router as season_router
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="Branksbowl 26/27", version="0.1")
+_STARTED_AT = datetime.now(timezone.utc)
 
 
 @app.middleware("http")
@@ -75,6 +77,10 @@ def health() -> dict:
     with Session(ENGINE) as s:
         return {
             "status": "ok",
+            # How long this process has been up - lets the frontend tell a genuine
+            # error apart from "Render's free tier just cold-started this request"
+            # (a low number here means the container booted moments ago).
+            "uptime_seconds": (datetime.now(timezone.utc) - _STARTED_AT).total_seconds(),
             "teams": s.exec(select(func.count()).select_from(Team)).one(),
             "players": s.exec(select(func.count()).select_from(Player)).one(),
             "gameweeks": s.exec(select(func.count()).select_from(Gameweek)).one(),

@@ -9,9 +9,9 @@
   <link rel="apple-touch-icon" href="/static/favicon-192.png" />
   <script>
     // Applied before the stylesheet paints, so there's no flash of the wrong theme.
+    // Dark is the default; a visitor's own toggle choice (saved below) always wins.
     (function () {
-      var t = localStorage.getItem("theme");
-      if (!t) t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      var t = localStorage.getItem("theme") || "dark";
       document.documentElement.setAttribute("data-theme", t);
     })();
   </script>
@@ -24,6 +24,7 @@
       <div class="header-btns">
         <span id="statusBadge" class="badge"></span>
         <button id="themeToggle" class="theme-toggle" title="Toggle dark mode">🌙</button>
+        <button id="setupCog" class="theme-toggle" title="Admin setup">⚙️</button>
       </div>
     </div>
   </header>
@@ -32,16 +33,28 @@
     <div class="wrap">
       <button data-view="league" class="active">League</button>
       <button data-view="fixtures">Fixtures</button>
-      <button data-view="h2h">Head-to-Head</button>
       <button data-view="records">Hall of Fame</button>
       <button data-view="rules">Rules</button>
-      <button data-view="setup">Setup</button>
-      <select id="seasonPicker" class="me-picker" title="Pick a season" style="display:none"></select>
-      <select id="mePicker" class="me-picker" title="Pick your team to highlight it"></select>
+      <div class="picker-group">
+        <select id="seasonPicker" class="me-picker" title="Pick a season" style="display:none"></select>
+        <select id="mePicker" class="me-picker" title="Pick your team to highlight it"></select>
+      </div>
     </div>
   </nav>
 
   <main id="app"></main>
+
+  <div id="loginModal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Admin login</h3>
+        <button class="mini-link" id="loginModalClose" title="Close" style="font-size:18px">✕</button>
+      </div>
+      <label>Username</label><input id="modal-user" autocomplete="username">
+      <label>Password</label><input id="modal-pass" type="password" autocomplete="current-password">
+      <div class="btns"><button class="btn" id="modal-login-btn">Log in</button></div>
+    </div>
+  </div>
 
   <div id="toast" class="toast"></div>
   <script src="/static/app.js"></script>

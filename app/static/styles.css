@@ -76,8 +76,12 @@ nav#tabs button {
 }
 nav#tabs button:hover { color: var(--ink); }
 nav#tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
+/* Wrapper carries the push-to-the-right margin so the two pickers stay
+   adjacent as a unit - giving each select its own auto margin would split the
+   flex free-space between them instead, pushing them apart from each other. */
+.picker-group { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .me-picker {
-  margin-left: auto; width: auto; max-width: 220px; padding: 7px 10px; font-size: 13px;
+  width: auto; max-width: 220px; padding: 7px 10px; font-size: 13px;
   border-radius: 8px; align-self: center;
 }
 
@@ -209,3 +213,32 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 }
 .toast.show { opacity: 1; }
 .toast.err { background: var(--danger); }
+
+/* loading / error states */
+.loading { display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted); padding: 40px 0; font-size: 14px; }
+.spinner { width: 18px; height: 18px; border: 2px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-box { text-align: center; padding: 30px 20px; color: var(--danger); }
+.error-box .muted { display: block; margin-top: 6px; }
+
+/* manager profile */
+.mini-link { background: none; border: none; cursor: pointer; font-size: 13px; padding: 0 2px;
+  opacity: .65; vertical-align: middle; line-height: 1; }
+.mini-link:hover { opacity: 1; }
+.form-badge { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 6px; font-size: 11px; font-weight: 700; color: #fff; margin-right: 4px; }
+.form-badge.form-w { background: var(--emerald); }
+.form-badge.form-d { background: var(--muted); }
+.form-badge.form-l { background: var(--danger); }
+
+/* login modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-box {
+  background: var(--card); border-radius: 16px; padding: 22px; width: 100%; max-width: 340px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
