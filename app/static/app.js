@@ -1170,9 +1170,19 @@ async function renderManagerProfile() {
   el("profileBack").onclick = () => setView(previousViewBeforeProfile);
 }
 
+function initToTop() {
+  const btn = el("toTop");
+  if (!btn) return;
+  const onScroll = () => btn.classList.toggle("show", window.scrollY > 400);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  btn.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+  onScroll();
+}
+
 // --- boot -----------------------------------------------------------------
 loadBranding();
 initBrandEdit();
+initToTop();
 initThemeToggle();
 initSetupCog();
 populateMePicker();
