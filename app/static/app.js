@@ -609,9 +609,9 @@ async function renderFixtures() {
   const token = renderToken;
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
-        <p>14 managers in two divisions of 7, each drafted separately on FPL Draft.</p></div></div>
-      <div class="rule"><div class="rule-ic">📅</div><div><b>35-game season</b>
-        <p>One match a week: your division ×3, the other division ×2, plus 3 extras (one derby + two random).</p></div></div>
+        <p>The league is split into two divisions with the same number of players in each, drafted separately on FPL Draft.</p></div></div>
+      <div class="rule"><div class="rule-ic">📅</div><div><b>Regular season</b>
+        <p>One match a week: each team in your division ×3, each in the other division ×2, plus 3 extra games (one derby + two random).</p></div></div>
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win 3, draw 1. Ranked on points, then total FPL points (PF). Only finished gameweeks count.</p></div></div>
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
