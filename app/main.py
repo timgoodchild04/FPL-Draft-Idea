@@ -141,4 +141,10 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/favicon.ico")
+def favicon() -> FileResponse:
+    # Browsers request this bare path directly, regardless of the <link> tags.
+    return FileResponse(STATIC_DIR / "favicon.ico")
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
