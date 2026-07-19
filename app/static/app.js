@@ -114,7 +114,7 @@ async function populateSeasonPicker() {
   if (seasonsCache.length <= 1) { sel.style.display = "none"; return; }
   sel.style.display = "";
   sel.innerHTML = seasonsCache.map((s) =>
-    `<option value="${s.id}">${esc(s.name)}${s.is_current ? "" : " (complete)"}</option>`).join("");
+    `<option value="${s.id}">${esc(s.name)}${s.is_current ? "" : " (finished)"}</option>`).join("");
   const cur = seasonsCache.find((s) => s.is_current);
   sel.value = String(selectedSeasonId || (cur && cur.id) || seasonsCache[0].id);
   sel.onchange = () => {
@@ -348,7 +348,7 @@ views.setup = async function () {
 
     ${locked ? `<div class="card" style="margin-top:18px">
       <h3>Start a new season</h3>
-      <p class="muted">Marks this season complete - its table, fixtures and results stay viewable forever
+      <p class="muted">Marks this season as finished - its table, fixtures and results stay viewable forever
         via the season picker in the top nav - and opens a blank Setup for a new one.</p>
       <label>New season name</label>
       <input id="newSeasonName" placeholder="e.g. Branksbowl 27/28">
@@ -356,12 +356,12 @@ views.setup = async function () {
     </div>` : ""}
 
     ${archivedSeasons.length ? `<div class="card" style="margin-top:18px">
-      <h3>Complete seasons</h3>
+      <h3>Finished seasons</h3>
       <p class="muted">Deleting a season removes its fixtures, results and rivalries for good -
         there's no undo.</p>
       <table><tbody>${archivedSeasons.map((sn) => `<tr>
           <td>${esc(sn.name)}</td>
-          <td class="muted" style="font-size:12px">completed ${timeAgo(sn.archived_at)}</td>
+          <td class="muted" style="font-size:12px">finished ${timeAgo(sn.archived_at)}</td>
           <td class="num"><button class="btn small" data-rename-season="${sn.id}">Rename</button>
             <button class="btn small pink" data-del-season="${sn.id}" style="margin-left:6px">Delete</button></td>
         </tr>`).join("")}</tbody></table>
@@ -521,7 +521,7 @@ views.setup = async function () {
   if (el("newSeasonBtn")) el("newSeasonBtn").onclick = async () => {
     const name = el("newSeasonName").value.trim();
     if (!confirm(`Start a new season${name ? ` named "${name}"` : ""}? This marks the current `
-      + "one complete (its data stays viewable, read-only, via the season picker) and gives you a blank "
+      + "one as finished (its data stays viewable, read-only, via the season picker) and gives you a blank "
       + "Setup to draft a new one.")) return;
     try { await api("/api/custom/seasons/new", { method: "POST", body: JSON.stringify({ name }) }); }
     catch (e) { return toast(e.message, true); }
@@ -631,7 +631,7 @@ async function renderFixtures() {
         <p>Top 2 from each division. Cross-division semis over GW36+37, then the final on GW38.</p></div></div>
     </div>`;
   const archived = isArchivedSelected();
-  const header = `<h2>Fixtures ${archived ? '<span class="pill">📁 Complete season</span>' : ""}</h2>` + rulesPanel;
+  const header = `<h2>Fixtures ${archived ? '<span class="pill">📁 Finished season</span>' : ""}</h2>` + rulesPanel;
   app().innerHTML = header + loadingHtml("Loading fixtures…");
   let data;
   try { data = await api(withSeason("/api/custom/fixtures")); }
@@ -707,7 +707,7 @@ views.rules = async function () {
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Top-2-per-division playoff</b>
         <p>Each division's top 2 go into a cross-division knockout, GW36-38.</p></div></div>
       <div class="rule"><div class="rule-ic">🗂️</div><div><b>Past seasons</b>
-        <p>Every finished season is marked complete and stays viewable, read-only, via the season picker in the nav.</p></div></div>
+        <p>Every finished season stays viewable, read-only, via the season picker in the nav.</p></div></div>
       <div class="rule"><div class="rule-ic">🥇</div><div><b>Hall of Fame</b>
         <p>Trophy cabinet of past champions, plus all-time records like highest gameweek score and longest streaks.</p></div></div>
     </div>
@@ -738,7 +738,7 @@ views.rules = async function () {
         one is a guaranteed match against your rival; the other two are always drawn at random. With no rivalries
         set, all ${extra} extras are random. The whole schedule is drawn once, randomly (no team is advantaged),
         then <b>locked</b> for the season - the only way to get a fresh schedule is to start a new season
-        on Setup, which marks this one complete rather than wiping it.</p>
+        on Setup, which marks this one finished rather than wiping it.</p>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -781,8 +781,8 @@ views.rules = async function () {
       <h3>5. Past seasons</h3>
       <ul>
         <li>Use the <b>season picker</b> in the top nav to browse any previous season - its table, fixtures and
-          playoff bracket stay exactly as they finished, marked with a "📁 Complete season" badge.</li>
-        <li>A complete season is permanently read-only: no more results sync, no editing - it's a historical
+          playoff bracket stay exactly as they finished, marked with a "📁 Finished season" badge.</li>
+        <li>A finished season is permanently read-only: no more results sync, no editing - it's a historical
           record.</li>
         <li>The <b>Hall of Fame</b> tab (below) looks across every season, not just the current one.</li>
       </ul>
@@ -791,10 +791,10 @@ views.rules = async function () {
     <div class="card" style="margin-top:18px">
       <h3>6. Hall of Fame</h3>
       <ul>
-        <li><b>Trophy cabinet:</b> the champion and runner-up from every completed season's playoffs.</li>
+        <li><b>Trophy cabinet:</b> the champion and runner-up from every finished season's playoffs.</li>
         <li><b>Records:</b> highest single-gameweek score, biggest win margin, longest win streak and longest
           unbeaten run - all computed across every season this site has tracked.</li>
-        <li><b>Most/fewest points in a season</b> only compares <b>complete</b> seasons, so an
+        <li><b>Most/fewest points in a season</b> only compares <b>finished</b> seasons, so an
           early hot streak in a season that's still in progress can't claim a record against a full season.</li>
       </ul>
     </div>
@@ -810,11 +810,11 @@ views.rules = async function () {
           rivalries) are locked for the season. Before it's generated, teams and rivalries can simply be
           re-saved to change them.</li>
         <li>Once a season's fixtures are locked, an admin can <b>start a new, named season</b>: the current one is
-          marked complete (kept, read-only, forever) and a blank Setup opens for the next one. This is now the only way
+          marked finished (kept, read-only, forever) and a blank Setup opens for the next one. This is now the only way
           to redo a season's teams once fixtures are locked.</li>
-        <li>Complete seasons can be <b>permanently deleted</b> from Setup if you want to clear out test data -
+        <li>Finished seasons can be <b>permanently deleted</b> from Setup if you want to clear out test data -
           this removes that season's fixtures, results and rivalries for good and can't be undone. The current
-          season can't be deleted this way - it has to be completed first.</li>
+          season can't be deleted this way - it has to be finished first.</li>
         <li>Results refresh automatically for anyone viewing the site once they're more than 30 minutes old - or
           every 3 minutes while a gameweek is actually live. An admin can also force an immediate sync from Setup
           or League.</li>
@@ -841,7 +841,7 @@ views.league = async function () {
     </div>`;
   app().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <h2 style="margin:0">League ${archived ? '<span class="pill">📁 Complete season</span>' : ""}</h2>
+      <h2 style="margin:0">League ${archived ? '<span class="pill">📁 Finished season</span>' : ""}</h2>
       ${isAdmin && !archived ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
     </div>
     <div class="muted" id="lastUpd" style="margin:2px 0 10px"></div>` + rulesPanel + `
@@ -973,7 +973,7 @@ views.records = async function () {
   }
 
   const trophyHtml = !trophies.length
-    ? '<p class="empty">No completed seasons yet - champions appear here once a season\'s playoffs finish.</p>'
+    ? '<p class="empty">No finished seasons yet - champions appear here once a season\'s playoffs finish.</p>'
     : `<table><thead><tr><th>Season</th><th>Champion</th><th>Runner-up</th></tr></thead>
        <tbody>${trophies.map((t) => `<tr>
            <td>${esc(t.season_name)}</td>
