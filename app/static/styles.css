@@ -242,3 +242,19 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   background: var(--card); border-radius: 16px; padding: 22px; width: 100%; max-width: 340px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
+
+/* --- mobile only: keep the nav from overflowing (desktop layout unchanged) --- */
+@media (max-width: 700px) {
+  .wrap { padding: 0 16px; }
+  main { padding: 20px 16px; }
+  header .wrap { padding-top: 12px; padding-bottom: 12px; }
+
+  /* nav: let the tab row wrap and drop the pickers onto their own full-width line */
+  nav#tabs .wrap { flex-wrap: wrap; row-gap: 0; }
+  nav#tabs button { padding: 12px 12px; font-size: 14px; }
+  .picker-group {
+    order: 2; margin-left: 0; width: 100%; gap: 8px;
+    padding: 8px 0 10px; border-top: 1px solid var(--line);
+  }
+  .picker-group .me-picker { flex: 1 1 0; max-width: none; }
+}
