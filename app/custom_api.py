@@ -161,20 +161,10 @@ def _status(s: Session, season: Season) -> dict:
     both_filled = len(divisions) == 2 and all(n > 0 for n in sizes)
     equal = both_filled and len(set(sizes)) == 1 and sizes[0] >= 2
 
-    all_entries = {e["entry_id"]: e["name"] for d in divisions for e in d["entries"]}
-    rivs = s.exec(select(Rivalry).where(Rivalry.season_id == season.id)).all()
-    rivalries = [{"a": r.entry_a, "b": r.entry_b,
-                  "a_name": all_entries.get(r.entry_a, str(r.entry_a)),
-                  "b_name": all_entries.get(r.entry_b, str(r.entry_b))} for r in rivs]
-    # Valid when they pair every team exactly once.
-    flat = [x for r in rivs for x in (r.entry_a, r.entry_b)]
-    rivalries_valid = (both_filled and equal and len(flat) == len(all_entries)
-                       and sorted(flat) == sorted(all_entries.keys()))
     meta = s.get(LeagueMeta, season.id)
     return {
         "has_season": True, "season_id": season.id,
         "divisions": divisions, "both_filled": both_filled, "sizes_equal": equal,
-        "rivalries": rivalries, "rivalries_valid": rivalries_valid,
         "fixtures_generated": fixtures_generated, "points_synced": points_synced,
         "fixtures_generated_at": meta.fixtures_generated_at if meta else None,
         "points_synced_at": meta.points_synced_at if meta else None,
@@ -454,36 +444,6 @@ def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
                                   entry_id=eid, manager_name=names[eid], team_name=""))
         # Teams changed - any existing rivalries reference old ids, so clear them.
         s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
-        s.commit()
-        return _status(s, season)
-
-
-class RivalriesIn(BaseModel):
-    pairs: list[list[int]]  # e.g. [[254949, 254948], ...] - each team exactly once
-
-
-@current_router.post("/rivalries")
-def set_rivalries(body: RivalriesIn, _admin: bool = Depends(require_admin)) -> dict:
-    """Set the derby pairs. Must pair every team exactly once (a perfect matching)."""
-    with Session(ENGINE) as s:
-        season = _current(s)
-        if season is None:
-            raise HTTPException(400, "Set up your teams first.")
-        if s.exec(select(Fixture).where(Fixture.season_id == season.id).limit(1)).first():
-            raise HTTPException(400, "Fixtures already generated and locked - start a new season to change rivalries.")
-        team_ids = {e.entry_id for d in _stage1_divisions(s, season)
-                    for e in s.exec(select(MirrorEntry).where(MirrorEntry.division_id == d.id)).all()}
-        flat = [x for pair in body.pairs for x in pair]
-        if any(len(p) != 2 for p in body.pairs):
-            raise HTTPException(400, "Each rivalry must have exactly two teams.")
-        if any(a == b for a, b in body.pairs):
-            raise HTTPException(400, "A team can't be its own rival.")
-        if sorted(flat) != sorted(team_ids):
-            raise HTTPException(400, "Rivalries must pair every team exactly once "
-                                     "(each player in one and only one pair).")
-        s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
-        for aid, bid in body.pairs:
-            s.add(Rivalry(season_id=season.id, entry_a=aid, entry_b=bid))
         s.commit()
         return _status(s, season)
 

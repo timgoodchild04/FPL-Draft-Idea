@@ -72,15 +72,7 @@ def generate_and_store_schedule(session: Session, season: Season, seed: int | No
     b_labels = [str(e.entry_id) for e in b_entries]
     div_of = {e.entry_id: "A" for e in a_entries} | {e.entry_id: "B" for e in b_entries}
 
-    # Load derby pairs (if set) and pass them as guaranteed extra games.
-    valid_ids = {e.entry_id for e in a_entries + b_entries}
-    derby_pairs = None
-    rivalries = session.exec(select(Rivalry).where(Rivalry.season_id == season.id)).all()
-    if rivalries and all(r.entry_a in valid_ids and r.entry_b in valid_ids for r in rivalries):
-        derby_pairs = [(str(r.entry_a), str(r.entry_b)) for r in rivalries]
-
-    weeks = schedule.generate_schedule(a_labels, b_labels, rounds=rounds, seed=seed,
-                                       derby_pairs=derby_pairs)
+    weeks = schedule.generate_schedule(a_labels, b_labels, rounds=rounds, seed=seed)
 
     session.exec(delete(Fixture).where(Fixture.season_id == season.id))
     for gw, week in enumerate(weeks, start=1):
