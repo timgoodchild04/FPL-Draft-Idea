@@ -31,6 +31,11 @@ class Season(SQLModel, table=True):
     # Stage 1 covers gameweeks 1..split_gameweek; stage 2 covers the rest.
     split_gameweek: int = 19
     current_stage: int = 1
+    # ISO UTC timestamp once this season is closed out and superseded by a new
+    # one; None means this is the active season. See custom_league.finished_gameweeks
+    # for why archived seasons snapshot their own "finished" state instead of
+    # trusting the (globally shared, id-reused-every-year) Gameweek table forever.
+    archived_at: str | None = None
 
 
 class Manager(SQLModel, table=True):
