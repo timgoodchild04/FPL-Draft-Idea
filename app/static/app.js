@@ -43,13 +43,47 @@ async function maybeRefresh() {
 
 // --- routing --------------------------------------------------------------
 const views = {};
+let selectedSeasonId = null;  // null = the current (active) season
+let seasonsCache = [];
 function setView(name) {
   document.querySelectorAll("#tabs button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
+  // Setup only ever administers the current season - drop any archived selection.
+  if (name === "setup" && selectedSeasonId !== null) {
+    selectedSeasonId = null;
+    const sel = el("seasonPicker"), cur = seasonsCache.find((s) => s.is_current);
+    if (sel && cur) sel.value = String(cur.id);
+  }
   (views[name] || (() => {}))();
 }
 document.querySelectorAll("#tabs button").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
+
+// A past (archived) season is picked by id; the current one is always "no param".
+function seasonParam() { return selectedSeasonId ? `season_id=${selectedSeasonId}` : ""; }
+function withSeason(path) {
+  const qs = seasonParam();
+  return qs ? path + (path.includes("?") ? "&" : "?") + qs : path;
+}
+function isArchivedSelected() { return selectedSeasonId !== null; }
+
+async function populateSeasonPicker() {
+  const sel = el("seasonPicker");
+  if (!sel) return;
+  try { seasonsCache = await api("/api/custom/seasons"); } catch { seasonsCache = []; }
+  if (seasonsCache.length <= 1) { sel.style.display = "none"; return; }
+  sel.style.display = "";
+  sel.innerHTML = seasonsCache.map((s) =>
+    `<option value="${s.id}">${esc(s.name)}${s.is_current ? "" : " (archived)"}</option>`).join("");
+  const cur = seasonsCache.find((s) => s.is_current);
+  sel.value = String(selectedSeasonId || (cur && cur.id) || seasonsCache[0].id);
+  sel.onchange = () => {
+    const chosen = seasonsCache.find((s) => String(s.id) === sel.value);
+    selectedSeasonId = chosen && !chosen.is_current ? chosen.id : null;
+    const active = document.querySelector("#tabs button.active");
+    if (active) setView(active.dataset.view);
+  };
+}
 
 async function populateMePicker() {
   const sel = el("mePicker");
@@ -68,6 +102,19 @@ async function populateMePicker() {
     else localStorage.removeItem("myEntryId");
     const active = document.querySelector("#tabs button.active");
     if (active) setView(active.dataset.view);
+  };
+}
+
+function initThemeToggle() {
+  const btn = el("themeToggle");
+  if (!btn) return;
+  const sync = () => { btn.textContent = document.documentElement.getAttribute("data-theme") === "dark" ? "☀️" : "🌙"; };
+  sync();
+  btn.onclick = () => {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("theme", next);
+    sync();
   };
 }
 
@@ -115,6 +162,8 @@ function renderLogin() {
 views.setup = async function () {
   if (!(await ensureAdmin())) { renderLogin(); return; }
   const st = await api("/api/custom/status");
+  const seasons = await api("/api/custom/seasons").catch(() => []);
+  const archivedSeasons = seasons.filter((sn) => !sn.is_current);
   const helpBox = help("Setup - enter teams, set rivalries, then generate",
     `<ol>
        <li><b>Team IDs</b> - put 7 per division (the number in a team's URL). Names are
@@ -173,7 +222,10 @@ views.setup = async function () {
     <div class="card" style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <h3 style="margin:0">1. Your two divisions</h3>
-        ${locked ? "" : '<button class="btn small" id="fillTest" title="Fill with random valid IDs for testing">🎲 Fill test IDs</button>'}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${locked ? "" : '<button class="btn small" id="shuffleAcross" title="Shuffle teams across Division A and B">🔀 Shuffle across divisions</button>'}
+          ${locked ? "" : '<button class="btn small" id="fillTest" title="Fill with random valid IDs for testing">🎲 Fill test IDs</button>'}
+        </div>
       </div>
       <div class="two-col">
         <div><h4 style="color:var(--purple)">Division A ${locked ? "" : '<button class="btn small" id="shuffle-a" title="Randomise order">🔀</button>'}</h4>
@@ -209,7 +261,27 @@ views.setup = async function () {
           : `<button class="btn green" id="genBtn" ${st.can_generate ? "" : "disabled"}>Generate fixtures (one time only)</button>`}
         ${st.has_season ? '<button class="btn pink" id="resetBtn">Start over</button>' : ""}
       </div>
-    </div>`;
+    </div>
+
+    ${locked ? `<div class="card" style="margin-top:18px">
+      <h3>Start a new season</h3>
+      <p class="muted">Archives this season - its table, fixtures and results stay viewable forever
+        via the season picker in the top nav - and opens a blank Setup for a new one.</p>
+      <label>New season name</label>
+      <input id="newSeasonName" placeholder="e.g. Branksbowl 27/28">
+      <div class="btns"><button class="btn" id="newSeasonBtn">Start new season</button></div>
+    </div>` : ""}
+
+    ${archivedSeasons.length ? `<div class="card" style="margin-top:18px">
+      <h3>Archived seasons</h3>
+      <p class="muted">Deleting a season removes its fixtures, results and rivalries for good -
+        there's no undo.</p>
+      <table><tbody>${archivedSeasons.map((sn) => `<tr>
+          <td>${esc(sn.name)}</td>
+          <td class="muted" style="font-size:12px">archived ${timeAgo(sn.archived_at)}</td>
+          <td class="num"><button class="btn small pink" data-del-season="${sn.id}">Delete</button></td>
+        </tr>`).join("")}</tbody></table>
+    </div>` : ""}`;
 
   el("logoutBtn").onclick = () => {
     adminAuth = null; sessionStorage.removeItem("adminAuth");
@@ -263,6 +335,28 @@ views.setup = async function () {
   }
   if (el("shuffle-a")) el("shuffle-a").onclick = () => shuffleColumn("a");
   if (el("shuffle-b")) el("shuffle-b").onclick = () => shuffleColumn("b");
+
+  // Shuffle both columns together, so teams can move between Division A and B.
+  function shuffleAcrossDivisions() {
+    const vals = [];
+    ["a", "b"].forEach((side) => {
+      for (let i = 0; i < rowCount; i++) {
+        const span = el(`${side}-nm-${i}`);
+        vals.push({ id: el(`${side}-id-${i}`).value, nm: span.innerHTML, cls: span.className });
+      }
+    });
+    for (let i = vals.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1)); [vals[i], vals[j]] = [vals[j], vals[i]];
+    }
+    let k = 0;
+    ["a", "b"].forEach((side) => {
+      for (let i = 0; i < rowCount; i++, k++) {
+        el(`${side}-id-${i}`).value = vals[k].id;
+        const span = el(`${side}-nm-${i}`); span.innerHTML = vals[k].nm; span.className = vals[k].cls;
+      }
+    });
+  }
+  if (el("shuffleAcross")) el("shuffleAcross").onclick = shuffleAcrossDivisions;
 
   if (el("fillTest")) el("fillTest").onclick = async () => {
     const btn = el("fillTest"); btn.disabled = true; btn.textContent = "Fetching…";
@@ -332,13 +426,57 @@ views.setup = async function () {
     catch (e) { return toast(e.message, true); }
     toast("Reset - enter your teams again"); refreshBadge(); views.setup();
   };
+  if (el("newSeasonBtn")) el("newSeasonBtn").onclick = async () => {
+    const name = el("newSeasonName").value.trim();
+    if (!confirm(`Start a new season${name ? ` named "${name}"` : ""}? This archives the current `
+      + "one (its data stays viewable, read-only, via the season picker) and gives you a blank "
+      + "Setup to draft a new one.")) return;
+    try { await api("/api/custom/seasons/new", { method: "POST", body: JSON.stringify({ name }) }); }
+    catch (e) { return toast(e.message, true); }
+    toast("New season started - set up your teams"); refreshBadge(); populateSeasonPicker(); views.setup();
+  };
+  document.querySelectorAll("[data-del-season]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.delSeason;
+      const name = (archivedSeasons.find((sn) => String(sn.id) === id) || {}).name || `season ${id}`;
+      if (!confirm(`Permanently delete "${name}"? This removes its fixtures, results and rivalries `
+        + `for good - there's no undo.`)) return;
+      try { await api(`/api/custom/seasons/${id}`, { method: "DELETE" }); }
+      catch (e) { return toast(e.message, true); }
+      toast("Season deleted"); populateSeasonPicker(); views.setup();
+    };
+  });
 };
 
 // ============================ FIXTURES ====================================
 views.fixtures = async function () {
   await renderFixtures();
-  if (await maybeRefresh()) { toast("Results updated"); renderFixtures(); }
+  if (!isArchivedSelected() && await maybeRefresh()) { toast("Results updated"); renderFixtures(); }
 };
+
+// Shared wherever a manager's name is shown - links out to their public FPL
+// Draft history page (no login needed, confirmed working: /entry/{id}/history).
+function mgrLink(m) {
+  return `<a class="mgr-link" href="https://draft.premierleague.com/entry/${m.entry_id}/history" `
+    + `target="_blank" rel="noopener noreferrer">${esc(m.name)}</a>`;
+}
+
+// Shared by Fixtures' gameweek grid and League's "Live now" card.
+function matchRowHtml(m) {
+  const me = String(myEntryId || "");
+  const homeMine = me && String(m.home_id) === me;
+  const awayMine = me && String(m.away_id) === me;
+  const played = m.home_points != null && m.away_points != null;
+  const homeWin = played && m.home_points > m.away_points;
+  const awayWin = played && m.away_points > m.home_points;
+  const row = (name, pts, win, mine) =>
+    `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
+    `<span class="pt">${pts != null ? pts : ""}</span></div>`;
+  return `<div class="match${homeMine || awayMine ? " mine" : ""}">
+      ${row(m.home, m.home_points, homeWin, homeMine)}
+      ${row(m.away, m.away_points, awayWin, awayMine)}
+    </div>`;
+}
 
 async function renderFixtures() {
   const rulesPanel = `<div class="rules">
@@ -351,8 +489,9 @@ async function renderFixtures() {
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
         <p>Top 4 overall. Semis #1v#4 &amp; #2v#3 over GW36+37, then the final on GW38.</p></div></div>
     </div>`;
-  const header = `<h2>Fixtures</h2>` + rulesPanel;
-  const data = await api("/api/custom/fixtures");
+  const archived = isArchivedSelected();
+  const header = `<h2>Fixtures ${archived ? '<span class="pill">📁 Archived season</span>' : ""}</h2>` + rulesPanel;
+  const data = await api(withSeason("/api/custom/fixtures"));
   if (!data.gameweeks.length) {
     app().innerHTML = header + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
     return;
@@ -372,29 +511,14 @@ async function renderFixtures() {
   const legend = `<div class="legend">
       <span><span class="dot" style="background:var(--accent)"></span> Current gameweek</span>
       <span><span class="dot" style="background:var(--accent-soft)"></span> Upcoming</span>
-      <span><span class="dot" style="background:#cbd0d6"></span> Finished</span>
+      <span><span class="dot" style="background:var(--muted-dot)"></span> Finished</span>
     </div>`;
   const tagText = { finished: "Finished", current: "Live", upcoming: "Upcoming" };
-  const me = String(myEntryId || "");
-  const matchHtml = (m) => {
-    const homeMine = me && String(m.home_id) === me;
-    const awayMine = me && String(m.away_id) === me;
-    const played = m.home_points != null && m.away_points != null;
-    const homeWin = played && m.home_points > m.away_points;
-    const awayWin = played && m.away_points > m.home_points;
-    const row = (name, pts, win, mine) =>
-      `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
-      `<span class="pt">${pts != null ? pts : ""}</span></div>`;
-    return `<div class="match${homeMine || awayMine ? " mine" : ""}">
-        ${row(m.home, m.home_points, homeWin, homeMine)}
-        ${row(m.away, m.away_points, awayWin, awayMine)}
-      </div>`;
-  };
   app().innerHTML = header + lockbar + updated + legend + `<div class="gw-grid">${
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
       <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
-      w.matches.map(matchHtml).join("")
+      w.matches.map(matchRowHtml).join("")
     }</div>`).join("")}</div>`;
 
   const cur = data.gameweeks.find((w) => w.status === "current");
@@ -418,7 +542,8 @@ views.rules = async function () {
       `<p>Drafting, transfers and weekly lineups all happen on the official <b>FPL Draft</b> site -
        nothing is drafted here. This site mirrors each manager's real gameweek points from FPL Draft
        and uses them to run our own custom <b>two-division head-to-head league</b>, complete with its
-       own fixture list, standings and end-of-season playoff.</p>`)}
+       own fixture list, standings, playoffs, past-season archive and all-time records that FPL Draft
+       itself doesn't offer.</p>`)}
 
     <div class="rules">
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>${teams} managers, 2 divisions</b>
@@ -429,6 +554,10 @@ views.rules = async function () {
         <p>Win = 3pts, draw = 1pt, loss = 0. Real FPL points decide who wins each match-up.</p></div></div>
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Top-4 playoff</b>
         <p>The top 4 in the combined table go into a knockout, GW36-38.</p></div></div>
+      <div class="rule"><div class="rule-ic">🗂️</div><div><b>Past seasons</b>
+        <p>Every finished season is archived and stays viewable, read-only, via the season picker in the nav.</p></div></div>
+      <div class="rule"><div class="rule-ic">🥇</div><div><b>Hall of Fame</b>
+        <p>Trophy cabinet of past champions, plus all-time records like highest gameweek score and longest streaks.</p></div></div>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -470,6 +599,11 @@ views.rules = async function () {
           season (PF)</b>.</li>
         <li>Division A and Division B each get their own table, and everyone also appears in one <b>combined
           overall table</b> - it's the combined table that decides the playoffs.</li>
+        <li><b>PF only totals the ${totalGws} regular-season gameweeks (GW1-${totalGws})</b> - gameweeks 36-38 feed
+          the playoffs instead (see below), so PF won't match the season-long total shown on the official FPL
+          Draft site until the playoffs are done too. Example: a manager sitting on 1512 PF after GW35 who then
+          scores 31, 40 and 34 in GW36-38 shows 1617 on FPL Draft's own site - the extra 105 points went into the
+          playoff bracket, not the regular-season table.</li>
       </ul>
     </div>
 
@@ -482,20 +616,61 @@ views.rules = async function () {
         <li><b>Final:</b> the two semi-final winners meet on <b>GW38</b> to decide the champion.</li>
         <li><b>Tie-break:</b> if a tie is level after its gameweek(s), the <b>higher seed</b> (the team that
           finished higher in the regular season) goes through.</li>
+        <li>Points scored in GW36-38 only ever count towards the playoff bracket - they never get added back into
+          the regular-season table's PF, even for the two managers who reach the final.</li>
       </ul>
     </div>
 
     <div class="card" style="margin-top:18px">
-      <h3>5. Setup &amp; admin rules</h3>
+      <h3>5. Past seasons</h3>
       <ul>
-        <li>The <b>League</b> and <b>Fixtures</b> tabs are open to everyone; only <b>Setup</b> needs an admin login.</li>
+        <li>Use the <b>season picker</b> in the top nav to browse any previous season - its table, fixtures and
+          playoff bracket stay exactly as they finished, marked with a "📁 Archived season" badge.</li>
+        <li>An archived season is permanently read-only: no more results sync, no editing - it's a historical
+          record.</li>
+        <li>The <b>Head-to-Head</b> and <b>Hall of Fame</b> tabs (below) both look across every season, not just
+          the current one.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>6. Head-to-Head</h3>
+      <ul>
+        <li>Pick any two managers to see their <b>all-time record</b> - wins, draws and losses - and every
+          individual meeting between them, across every season they've both played in.</li>
+        <li>Only counts meetings from finished gameweeks, same as the standings.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>7. Hall of Fame</h3>
+      <ul>
+        <li><b>Trophy cabinet:</b> the champion and runner-up from every completed season's playoffs.</li>
+        <li><b>Records:</b> highest single-gameweek score, biggest win margin, longest win streak and longest
+          unbeaten run - all computed across every season this site has tracked.</li>
+        <li><b>Most/fewest points in a season</b> only compares <b>archived</b> (fully completed) seasons, so an
+          early hot streak in a season that's still in progress can't claim a record against a full season.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>8. Setup &amp; admin rules</h3>
+      <ul>
+        <li>The <b>League</b>, <b>Fixtures</b>, <b>Head-to-Head</b>, <b>Hall of Fame</b> and <b>Rules</b> tabs are
+          open to everyone; only <b>Setup</b> needs an admin login.</li>
         <li>Each division's FPL Draft team IDs are entered on Setup - both divisions must be the <b>same size</b>,
           and every ID is checked against FPL Draft before it can be saved.</li>
         <li><b>Generating fixtures is random and one-time only</b> - once generated, the schedule (and any
-          rivalries) are locked for the season. The only way to change teams or rivalries afterwards is
-          <b>"Start over"</b>, which wipes fixtures, results, rivalries and teams completely.</li>
-        <li>Results refresh automatically for anyone viewing the site once they're more than 30 minutes old; an
-          admin can also force an immediate sync from Setup or League.</li>
+          rivalries) are locked for the season. Before it's generated, <b>"Start over"</b> wipes teams and
+          rivalries so you can redo them.</li>
+        <li>Once a season's fixtures are locked, an admin can <b>start a new, named season</b>: the current one is
+          archived (kept, read-only, forever) and a blank Setup opens for the next one.</li>
+        <li>Archived seasons can be <b>permanently deleted</b> from Setup if you want to clear out test data -
+          this removes that season's fixtures, results and rivalries for good and can't be undone. The current
+          season can't be deleted this way - it has to be archived first.</li>
+        <li>Results refresh automatically for anyone viewing the site once they're more than 30 minutes old - or
+          every 3 minutes while a gameweek is actually live. An admin can also force an immediate sync from Setup
+          or League.</li>
       </ul>
     </div>`;
 };
@@ -503,6 +678,7 @@ views.rules = async function () {
 // ============================ LEAGUE ======================================
 views.league = async function () {
   const isAdmin = await ensureAdmin();
+  const archived = isArchivedSelected();
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">📊</div><div><b>Reading the table</b>
         <p>Head-to-head: win 3, draw 1. Ranked on points, then total FPL points (PF). Top 4 overall (highlighted) reach the playoffs.</p></div></div>
@@ -511,24 +687,40 @@ views.league = async function () {
     </div>`;
   app().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <h2 style="margin:0">League</h2>
-      ${isAdmin ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
+      <h2 style="margin:0">League ${archived ? '<span class="pill">📁 Archived season</span>' : ""}</h2>
+      ${isAdmin && !archived ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
     </div>
     <div class="muted" id="lastUpd" style="margin:2px 0 10px"></div>` + rulesPanel + `
+    <div id="liveNow"></div>
     <div id="tables"></div>
     <h3 style="margin-top:26px">Playoffs (GW36-38)</h3>
     <div id="bracket"></div>`;
   if (el("syncBtn2")) el("syncBtn2").onclick = async () => {
     try { const r = await api("/api/custom/sync-points", { method: "POST" });
       toast(`Synced ${r.teams} teams`); } catch (e) { return toast(e.message, true); }
-    renderTables(); renderBracket();
+    renderTables(); renderBracket(); renderLiveNow();
   };
-  await Promise.all([renderTables(), renderBracket()]);
-  if (await maybeRefresh()) { toast("Results updated"); renderTables(); renderBracket(); }
+  await Promise.all([renderTables(), renderBracket(), renderLiveNow()]);
+  if (!archived && await maybeRefresh()) {
+    toast("Results updated"); renderTables(); renderBracket(); renderLiveNow();
+  }
 };
 
+async function renderLiveNow() {
+  const box = el("liveNow");
+  if (!box) return;
+  if (isArchivedSelected()) { box.innerHTML = ""; return; }
+  const data = await api(withSeason("/api/custom/fixtures"));
+  const live = data.gameweeks.find((w) => w.status === "current");
+  box.innerHTML = !live ? "" : `<div class="card" style="margin-bottom:18px;border-color:var(--accent)">
+      <h3 style="margin-top:0">⚡ Live - Gameweek ${live.gameweek}
+        <span class="muted" style="font-weight:400;font-size:12px">(provisional, not final)</span></h3>
+      ${live.matches.map(matchRowHtml).join("")}
+    </div>`;
+}
+
 async function renderTables() {
-  const data = await api("/api/custom/table");
+  const data = await api(withSeason("/api/custom/table"));
   const lu = el("lastUpd");
   if (lu) lu.textContent = data.last_updated ? `Results updated ${timeAgo(data.last_updated)}` : "No results synced yet";
   if (!data.combined || !data.combined.length) {
@@ -541,7 +733,7 @@ async function renderTables() {
     <table><thead><tr><th>#</th><th>Manager</th><th class="num">P</th><th class="num">W</th>
       <th class="num">D</th><th class="num">L</th><th class="num">PF</th><th class="num">Pts</th></tr></thead>
     <tbody>${rows.map((r) => `<tr class="${top4.has(r.entry_id) ? "qualified" : ""}${String(r.entry_id) === me ? " mine" : ""}">
-      <td>${r.rank}</td><td>${esc(r.manager)}${top4.has(r.entry_id) ? '<span class="qtag">PO</span>' : ""}</td>
+      <td>${r.rank}</td><td>${mgrLink({ entry_id: r.entry_id, name: r.manager })}${top4.has(r.entry_id) ? '<span class="qtag">PO</span>' : ""}</td>
       <td class="num">${r.played}</td><td class="num">${r.won}</td><td class="num">${r.drawn}</td>
       <td class="num">${r.lost}</td><td class="num">${r.points_for}</td>
       <td class="num"><b>${r.h2h_points}</b></td></tr>`).join("")}</tbody></table></div>`;
@@ -550,7 +742,7 @@ async function renderTables() {
 }
 
 async function renderBracket() {
-  const po = await api("/api/custom/playoffs");
+  const po = await api(withSeason("/api/custom/playoffs"));
   if (!po.ready) {
     el("bracket").innerHTML = `<p class="empty">${esc(po.reason || "Playoffs not available yet.")}</p>`;
     return;
@@ -587,7 +779,111 @@ async function renderBracket() {
     </div>`;
 }
 
+// ============================ HEAD-TO-HEAD ================================
+views.h2h = async function () {
+  let managers = [];
+  try { managers = await api("/api/custom/managers"); } catch { /* leave empty */ }
+  const opts = () => managers.map((m) => `<option value="${m.entry_id}">${esc(m.name)}</option>`).join("");
+
+  app().innerHTML = help("Head-to-head",
+    "<p>The all-time record between any two managers, across every season - not just this one.</p>") + `
+    <h2>Head-to-Head</h2>
+    ${!managers.length ? '<p class="empty">No managers yet - set up a season first.</p>' : `
+    <div class="card">
+      <div class="row" style="gap:12px;align-items:flex-end">
+        <div style="flex:1"><label>Manager A</label><select id="h2h-a">${opts()}</select></div>
+        <div style="flex:0 0 auto;color:var(--muted);padding-bottom:10px">vs</div>
+        <div style="flex:1"><label>Manager B</label><select id="h2h-b">${opts()}</select></div>
+      </div>
+      <div class="btns"><button class="btn" id="h2hBtn">Compare</button></div>
+    </div>
+    <div id="h2hResult" style="margin-top:18px"></div>`}`;
+
+  if (!managers.length) return;
+  if (managers.length > 1) el("h2h-b").selectedIndex = 1;
+
+  el("h2hBtn").onclick = async () => {
+    const a = el("h2h-a").value, b = el("h2h-b").value;
+    if (a === b) return toast("Pick two different managers", true);
+    let data;
+    try { data = await api(`/api/custom/h2h?a=${a}&b=${b}`); }
+    catch (e) { return toast(e.message, true); }
+    renderH2hResult(data);
+  };
+};
+
+function renderH2hResult(data) {
+  const { a, b, record, meetings } = data;
+  const box = el("h2hResult");
+  const summary = `<h3 style="margin-top:0">${esc(a.name)} <span class="muted">vs</span> ${esc(b.name)}</h3>
+    <p style="font-size:15px">
+      <b>${record.a_wins}</b> wins - <b>${record.draws}</b> draws - <b>${record.b_wins}</b> wins
+    </p>`;
+  if (!meetings.length) {
+    box.innerHTML = `<div class="card">${summary}<p class="empty">They haven't met yet (in a finished gameweek).</p></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="card">${summary}
+    <table><thead><tr><th>Season</th><th class="num">GW</th>
+      <th class="num">${esc(a.name)}</th><th class="num">${esc(b.name)}</th></tr></thead>
+    <tbody>${meetings.map((m) => `<tr>
+        <td>${esc(m.season_name)}</td><td class="num">${m.gameweek}</td>
+        <td class="num${m.a_points > m.b_points ? " up" : ""}">${m.a_points}</td>
+        <td class="num${m.b_points > m.a_points ? " up" : ""}">${m.b_points}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+}
+
+// ============================ HALL OF FAME ================================
+views.records = async function () {
+  const [trophies, recs] = await Promise.all([
+    api("/api/custom/trophies").catch(() => []),
+    api("/api/custom/records").catch(() => ({})),
+  ]);
+
+  const trophyHtml = !trophies.length
+    ? '<p class="empty">No completed seasons yet - champions appear here once a season\'s playoffs finish.</p>'
+    : `<table><thead><tr><th>Season</th><th>Champion</th><th>Runner-up</th></tr></thead>
+       <tbody>${trophies.map((t) => `<tr>
+           <td>${esc(t.season_name)}</td>
+           <td>🏆 ${mgrLink(t.champion)}</td>
+           <td>${t.runner_up ? mgrLink(t.runner_up) : "-"}</td>
+         </tr>`).join("")}</tbody></table>`;
+
+  const card = (icon, title, body) =>
+    `<div class="rule"><div class="rule-ic">${icon}</div><div><b>${title}</b><p>${body}</p></div></div>`;
+  const r = recs || {};
+  const cards = [
+    r.highest_gameweek && card("🚀", "Highest gameweek score",
+      `${mgrLink(r.highest_gameweek)} - <b>${r.highest_gameweek.points}</b> pts `
+      + `(GW${r.highest_gameweek.gameweek}, ${esc(r.highest_gameweek.season_name)})`),
+    r.biggest_margin && card("💥", "Biggest win margin",
+      `${mgrLink({ entry_id: r.biggest_margin.winner_id, name: r.biggest_margin.winner })} `
+      + `${r.biggest_margin.winner_points}-${r.biggest_margin.loser_points} `
+      + `${mgrLink({ entry_id: r.biggest_margin.loser_id, name: r.biggest_margin.loser })} `
+      + `(GW${r.biggest_margin.gameweek}, ${esc(r.biggest_margin.season_name)})`),
+    r.best_win_streak && card("🔥", "Longest win streak",
+      `${mgrLink(r.best_win_streak)} - <b>${r.best_win_streak.length}</b> wins in a row`),
+    r.best_unbeaten_streak && card("🛡️", "Longest unbeaten run",
+      `${mgrLink(r.best_unbeaten_streak)} - <b>${r.best_unbeaten_streak.length}</b> games unbeaten`),
+    r.most_points_season && card("📈", "Most points in a season",
+      `${mgrLink(r.most_points_season)} - <b>${r.most_points_season.total}</b> pts (${esc(r.most_points_season.season_name)})`),
+    r.fewest_points_season && card("📉", "Fewest points in a season",
+      `${mgrLink(r.fewest_points_season)} - <b>${r.fewest_points_season.total}</b> pts (${esc(r.fewest_points_season.season_name)})`),
+  ].filter(Boolean);
+
+  app().innerHTML = help("Hall of Fame",
+    "<p>Champions and record-breakers across every season this site has tracked.</p>") + `
+    <h2>Hall of Fame</h2>
+    <h3 style="margin-top:0">Trophy cabinet</h3>
+    <div class="card">${trophyHtml}</div>
+    <h3>Records</h3>
+    ${cards.length ? `<div class="rules">${cards.join("")}</div>`
+      : '<p class="empty">No finished gameweeks yet - records appear once results start coming in.</p>'}`;
+};
+
 // --- boot -----------------------------------------------------------------
+initThemeToggle();
 populateMePicker();
+populateSeasonPicker();
 refreshBadge();
 setView("league");

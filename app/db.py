@@ -14,6 +14,7 @@ from sqlmodel import Session, SQLModel, create_engine
 # (table_name, column_name, SQL type)
 _ADDED_COLUMNS = [
     ("leaguemeta", "points_synced_at", "VARCHAR"),
+    ("season", "archived_at", "VARCHAR"),
 ]
 
 

@@ -75,6 +75,11 @@ def _current(s: Session) -> Season | None:
     return s.exec(select(Season).order_by(Season.id.desc())).first()
 
 
+def _resolve_season(s: Session, season_id: int | None) -> Season | None:
+    """Explicit season_id (e.g. picking a past season) or else the current one."""
+    return _season(s, season_id) if season_id is not None else _current(s)
+
+
 def _ensure_season(s: Session) -> Season:
     cur = _current(s)
     return cur or setup_league.create_season(s, "Draft League", split_gameweek=35)
@@ -154,12 +159,77 @@ def _entry_name(pub: dict, entry_id: int) -> str:
 
 
 @current_router.get("/status")
-def status() -> dict:
+def status(season_id: int | None = None) -> dict:
     with Session(ENGINE) as s:
-        season = _current(s)
+        season = _resolve_season(s, season_id)
         if season is None:
             return {"has_season": False}
         return _status(s, season)
+
+
+@current_router.get("/seasons")
+def list_seasons() -> list[dict]:
+    """Every season ever created, newest first - powers the season picker."""
+    with Session(ENGINE) as s:
+        cur = _current(s)
+        rows = s.exec(select(Season).order_by(Season.id.desc())).all()
+        return [{"id": sn.id, "name": sn.name, "archived_at": sn.archived_at,
+                 "is_current": cur is not None and sn.id == cur.id} for sn in rows]
+
+
+class NewSeasonIn(BaseModel):
+    name: str = ""
+
+
+@current_router.post("/seasons/new")
+def new_season(body: NewSeasonIn = NewSeasonIn(), _admin: bool = Depends(require_admin)) -> dict:
+    """Archive the current season (read-only forever after) and start a fresh one."""
+    with Session(ENGINE) as s:
+        season = _current(s)
+        has_fixtures = season is not None and s.exec(
+            select(Fixture).where(Fixture.season_id == season.id).limit(1)).first() is not None
+        if not has_fixtures:
+            raise HTTPException(400, "Generate this season's fixtures before starting a new one.")
+        season.archived_at = datetime.now(timezone.utc).isoformat()
+        s.add(season)
+        s.commit()
+        name = body.name.strip() or "Draft League"
+        new = setup_league.create_season(s, name, split_gameweek=35)
+        _ensure_divisions(s, new)
+        return _status(s, new)
+
+
+def _purge_season(s: Session, season: Season) -> None:
+    """Permanently delete every row belonging to a season, including the season
+    itself. Deletes children before parents so this is safe under Postgres'
+    enforced foreign keys, not just SQLite's unenforced ones."""
+    for d in s.exec(select(Division).where(Division.season_id == season.id)).all():
+        s.exec(delete(MirrorEntry).where(MirrorEntry.division_id == d.id))
+        s.exec(delete(MirrorLink).where(MirrorLink.division_id == d.id))
+        s.delete(d)
+    s.exec(delete(Fixture).where(Fixture.season_id == season.id))
+    s.exec(delete(EntryPoints).where(EntryPoints.season_id == season.id))
+    s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
+    meta = s.get(LeagueMeta, season.id)
+    if meta:
+        s.delete(meta)
+    s.delete(season)
+
+
+@current_router.delete("/seasons/{season_id}")
+def delete_season(season_id: int, _admin: bool = Depends(require_admin)) -> dict:
+    """Permanently delete an archived season and all its data. Can't touch the
+    current season this way - archive it (Start new season) first."""
+    with Session(ENGINE) as s:
+        season = s.get(Season, season_id)
+        if season is None:
+            raise HTTPException(404, f"No season {season_id}")
+        if not season.archived_at:
+            raise HTTPException(400, "Can't delete the current season - start a new one first "
+                                     "to archive it, then delete it.")
+        _purge_season(s, season)
+        s.commit()
+        return {"deleted": season_id}
 
 
 @current_router.post("/teams")
@@ -320,7 +390,8 @@ def sync_points(_admin: bool = Depends(require_admin)) -> dict:
             raise HTTPException(502, f"Failed to fetch points: {e}")
 
 
-REFRESH_STALE_SECONDS = 1800  # 30 minutes
+REFRESH_STALE_SECONDS = 1800       # 30 minutes, normally
+REFRESH_STALE_SECONDS_LIVE = 180   # 3 minutes, while a gameweek is actually in play
 
 
 @current_router.post("/refresh")
@@ -329,6 +400,8 @@ def refresh() -> dict:
 
     Cheap no-op when fresh, so it's safe to call on every page load without
     hammering FPL. Not admin-gated - viewers keep the data current just by visiting.
+    Refreshes much more often while a gameweek is live, since that's when scores
+    are actually moving.
     """
     with Session(ENGINE) as s:
         season = _current(s)
@@ -336,10 +409,13 @@ def refresh() -> dict:
             return {"synced": False, "last_updated": None}
         meta = s.get(LeagueMeta, season.id)
         last = meta.points_synced_at if meta else None
+        live = s.exec(select(Gameweek).where(
+            Gameweek.is_current == True, Gameweek.finished == False)).first() is not None  # noqa: E712
+        stale_after = REFRESH_STALE_SECONDS_LIVE if live else REFRESH_STALE_SECONDS
         if last:
             try:
                 age = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
-                if age < REFRESH_STALE_SECONDS:
+                if age < stale_after:
                     return {"synced": False, "last_updated": last}
             except Exception:
                 pass
@@ -354,9 +430,9 @@ def refresh() -> dict:
 
 
 @current_router.get("/fixtures")
-def fixtures() -> dict:
+def fixtures(season_id: int | None = None) -> dict:
     with Session(ENGINE) as s:
-        season = _current(s)
+        season = _resolve_season(s, season_id)
         if season is None:
             return {"gameweeks": []}
         a, b = custom_league.collect_divisions(s, season)
@@ -397,9 +473,9 @@ def fixtures() -> dict:
 
 
 @current_router.get("/table")
-def table() -> dict:
+def table(season_id: int | None = None) -> dict:
     with Session(ENGINE) as s:
-        season = _current(s)
+        season = _resolve_season(s, season_id)
         if season is None:
             return {"combined": [], "division_a": [], "division_b": []}
         meta = s.get(LeagueMeta, season.id)
@@ -411,12 +487,41 @@ def table() -> dict:
 
 
 @current_router.get("/playoffs")
-def playoffs() -> dict:
+def playoffs(season_id: int | None = None) -> dict:
     with Session(ENGINE) as s:
-        season = _current(s)
+        season = _resolve_season(s, season_id)
         if season is None:
             return {"ready": False, "reason": "No season yet."}
         try:
             return custom_league.playoffs(s, season)
         except ValueError as e:
             return {"ready": False, "reason": str(e)}
+
+
+@current_router.get("/managers")
+def managers() -> list[dict]:
+    """Every manager ever seen (any season), for the Head-to-Head pickers."""
+    with Session(ENGINE) as s:
+        names = custom_league.all_manager_names(s)
+        return [{"entry_id": eid, "name": nm}
+                for eid, nm in sorted(names.items(), key=lambda kv: kv[1].lower())]
+
+
+@current_router.get("/h2h")
+def h2h(a: int, b: int) -> dict:
+    if a == b:
+        raise HTTPException(400, "Pick two different managers.")
+    with Session(ENGINE) as s:
+        return custom_league.head_to_head(s, a, b)
+
+
+@current_router.get("/records")
+def records() -> dict:
+    with Session(ENGINE) as s:
+        return custom_league.league_records(s)
+
+
+@current_router.get("/trophies")
+def trophies() -> list[dict]:
+    with Session(ENGINE) as s:
+        return custom_league.trophy_cabinet(s)
