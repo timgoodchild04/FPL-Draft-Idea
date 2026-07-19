@@ -83,6 +83,20 @@ async function loadBranding() {
   try { applyBranding((await api("/api/custom/settings")).league_name); }
   catch { /* keep the default already in the HTML */ }
 }
+// The header pencil (shown only on Setup when logged in) renames the league.
+function initBrandEdit() {
+  const be = el("brandEdit");
+  if (!be) return;
+  be.onclick = async () => {
+    const name = prompt("League name:", leagueName);
+    if (name === null) return;                     // cancelled
+    if (!name.trim()) return toast("Name can't be empty", true);
+    try { await api("/api/custom/settings", { method: "POST", body: JSON.stringify({ league_name: name.trim() }) }); }
+    catch (e) { return toast(e.message, true); }
+    applyBranding(name.trim());                    // updates header + tab at once
+    toast("League name saved");
+  };
+}
 
 // --- routing --------------------------------------------------------------
 const views = {};
@@ -98,6 +112,7 @@ let previousViewBeforeProfile = "league";  // tab to return to via its Back butt
 let renderToken = 0;
 function setView(name) {
   renderToken++;
+  const _be = el("brandEdit"); if (_be) _be.style.display = "none";  // only shown on Setup
   document.querySelectorAll("#tabs button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
   // Setup only ever administers the current season - drop any archived selection.
@@ -251,6 +266,7 @@ views.setup = async function () {
   const isAdmin = await ensureAdmin();
   if (token !== renderToken) return;
   if (!isAdmin) { renderLogin(); return; }
+  const be = el("brandEdit"); if (be) be.style.display = "";  // reveal the rename pencil
   let st, seasons;
   try {
     st = await api("/api/custom/status");
@@ -318,14 +334,6 @@ views.setup = async function () {
       <button class="btn small" id="logoutBtn">Log out</button>
     </div>
     <div class="card" style="margin-top:12px">
-      <h3 style="margin-top:0">League name</h3>
-      <p class="muted">Shown in the header and the browser tab, for everyone.</p>
-      <div class="row" style="max-width:440px">
-        <div style="flex:2"><input id="leagueNameInput" placeholder="Branksbowl" maxlength="40"></div>
-        <div style="flex:0"><button class="btn" id="saveBrandingBtn">Save name</button></div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:18px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <h3 style="margin:0">1. Your two divisions</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -408,15 +416,6 @@ views.setup = async function () {
     toast("Logged out"); refreshBadge(); views.setup();
   };
 
-  if (el("leagueNameInput")) el("leagueNameInput").value = leagueName;
-  if (el("saveBrandingBtn")) el("saveBrandingBtn").onclick = async () => {
-    const name = el("leagueNameInput").value.trim();
-    if (!name) return toast("Enter a league name", true);
-    try { await api("/api/custom/settings", { method: "POST", body: JSON.stringify({ league_name: name }) }); }
-    catch (e) { return toast(e.message, true); }
-    applyBranding(name);   // updates header + tab immediately
-    toast("League name saved");
-  };
 
   const collect = (side) => {
     const out = [];
@@ -1109,6 +1108,7 @@ async function renderManagerProfile() {
 
 // --- boot -----------------------------------------------------------------
 loadBranding();
+initBrandEdit();
 initThemeToggle();
 initSetupCog();
 populateMePicker();
