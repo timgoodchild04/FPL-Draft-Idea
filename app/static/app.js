@@ -1032,19 +1032,6 @@ async function renderManagerProfile() {
     const last5 = log.slice(-5);
     return last5.length ? last5.map(formBadge).join("") : '<span class="muted">No results yet</span>';
   };
-  // Cumulative head-to-head points across the season - a simple inline sparkline, no chart library.
-  const sparkline = (log) => {
-    if (log.length < 2) return "";
-    let cum = 0;
-    const pts = log.map((g) => (cum += g.result === "W" ? 3 : g.result === "D" ? 1 : 0));
-    const max = Math.max(...pts, 1);
-    const w = 320, h = 60, step = w / (pts.length - 1);
-    const coords = pts.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / max) * (h - 8) - 4).toFixed(1)}`).join(" ");
-    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="margin-top:8px">
-      <polyline points="${coords}" fill="none" stroke="var(--accent)" stroke-width="2" />
-    </svg>`;
-  };
-
   const career = profile.career;
   const season = profile.season;
   app().innerHTML = `
@@ -1062,7 +1049,6 @@ async function renderManagerProfile() {
     ${!season ? '<p class="empty">This manager hasn\'t played in any season yet.</p>' : `
     <div class="card" style="margin-top:18px">
       <h3 style="margin-top:0">${esc(season.season_name)}${season.division ? ` - Division ${season.division}` : ""}</h3>
-      ${sparkline(season.log)}
       ${!season.log.length ? '<p class="empty">No finished gameweeks yet this season.</p>' : `
       <table><thead><tr><th class="num">GW</th><th>Opponent</th>
           <th class="num">For</th><th class="num">Against</th><th>Result</th></tr></thead>
