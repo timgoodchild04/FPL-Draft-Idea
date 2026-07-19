@@ -609,8 +609,8 @@ async function renderFixtures() {
   const token = renderToken;
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
-        <p>14 managers in two divisions of 7, each drafted separately on FPL Draft.</p></div></div>
-      <div class="rule"><div class="rule-ic">📅</div><div><b>35-game season</b>
+        <p>Managers are split evenly into two divisions, each drafted separately on FPL Draft.</p></div></div>
+      <div class="rule"><div class="rule-ic">📅</div><div><b>Regular season</b>
         <p>One match a week: your division ×3, the other division ×2, plus 3 extras (one derby + two random).</p></div></div>
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win 3, draw 1. Ranked on points, then total FPL points (PF). Only finished gameweeks count.</p></div></div>
@@ -685,9 +685,9 @@ views.rules = async function () {
        itself doesn't offer.</p>`)}
 
     <div class="rules">
-      <div class="rule"><div class="rule-ic">🏟️</div><div><b>${teams} managers, 2 divisions</b>
-        <p>Division A and Division B, ${k} managers each - each is its own real FPL Draft mini-league, drafted separately.</p></div></div>
-      <div class="rule"><div class="rule-ic">📅</div><div><b>${totalGws}-gameweek season</b>
+      <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
+        <p>Division A and Division B with the same number of managers in each - each is its own real FPL Draft mini-league, drafted separately.</p></div></div>
+      <div class="rule"><div class="rule-ic">📅</div><div><b>One match a week</b>
         <p>A random schedule, generated once and locked for the rest of the season.</p></div></div>
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win = 3pts, draw = 1pt, loss = 0. Real FPL points decide who wins each match-up.</p></div></div>
@@ -702,7 +702,7 @@ views.rules = async function () {
     <div class="card" style="margin-top:18px">
       <h3>1. The format</h3>
       <ul>
-        <li><b>${teams} managers</b> split into two divisions, <b>Division A</b> and <b>Division B</b>, of ${k} each.</li>
+        <li>Managers are split evenly into two divisions, <b>Division A</b> and <b>Division B</b>, with the same number in each.</li>
         <li>Each division is a genuine FPL Draft mini-league - drafting, waivers/free agents and each manager's
           weekly lineup are all managed on the official FPL Draft site, not here.</li>
         <li>This site links to both leagues by team ID, pulls each manager's real per-gameweek points, and builds
@@ -711,8 +711,8 @@ views.rules = async function () {
     </div>
 
     <div class="card" style="margin-top:18px">
-      <h3>2. The season - ${totalGws} gameweeks, one match a week</h3>
-      <p class="muted">Every manager plays exactly one match every gameweek. Over the season each manager faces:</p>
+      <h3>2. The season - one match a week</h3>
+      <p class="muted">Every manager plays exactly one match every gameweek. With the league's current size, each manager faces:</p>
       <table>
         <tbody>
           <tr><td>Each of the ${k - 1} rivals in their own division</td><td class="num">×3</td><td class="num">${divGames} games</td></tr>
