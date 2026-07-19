@@ -1,8 +1,17 @@
 "use strict";
 
 // --- helpers --------------------------------------------------------------
-let adminAuth = sessionStorage.getItem("adminAuth") || null;
+// localStorage = "stay logged in" (survives closing the tab); sessionStorage = just this session.
+let adminAuth = sessionStorage.getItem("adminAuth") || localStorage.getItem("adminAuth") || null;
 let myEntryId = localStorage.getItem("myEntryId") || "";  // viewer's chosen team
+function storeAdminAuth(h, remember) {
+  adminAuth = h;
+  if (remember) { localStorage.setItem("adminAuth", h); sessionStorage.removeItem("adminAuth"); }
+  else { sessionStorage.setItem("adminAuth", h); localStorage.removeItem("adminAuth"); }
+}
+function clearAdminAuth() {
+  adminAuth = null; sessionStorage.removeItem("adminAuth"); localStorage.removeItem("adminAuth");
+}
 
 async function api(path, opts) {
   const headers = { "Content-Type": "application/json", ...(opts && opts.headers) };
@@ -110,6 +119,7 @@ let previousViewBeforeProfile = "league";  // tab to return to via its Back butt
 // response (a real-world issue on Render, where round-trips can lag) gets
 // dropped instead of clobbering whatever's now on screen with stale content.
 let renderToken = 0;
+let leagueAdmin = false;  // true when the League view is being shown to a logged-in admin
 function setView(name) {
   renderToken++;
   const _be = el("brandEdit"); if (_be) _be.style.display = "none";  // only shown on Setup
@@ -212,7 +222,8 @@ function initSetupCog() {
       const res = await fetch("/api/custom/auth-check", { headers: { Authorization: h } });
       if (!res.ok) throw 0;
     } catch { return toast("Invalid username or password", true); }
-    adminAuth = h; sessionStorage.setItem("adminAuth", h);
+    const remember = el("modal-remember") && el("modal-remember").checked;
+    storeAdminAuth(h, remember);
     closeLoginModal(); toast("Logged in"); refreshBadge(); setView("setup");
   };
   el("modal-login-btn").onclick = submit;
@@ -235,7 +246,7 @@ const ROSTER_ROWS = 7;
 async function ensureAdmin() {
   if (!adminAuth) return false;
   try { await api("/api/custom/auth-check"); return true; }
-  catch { adminAuth = null; sessionStorage.removeItem("adminAuth"); return false; }
+  catch { clearAdminAuth(); return false; }
 }
 
 function renderLogin() {
@@ -245,6 +256,8 @@ function renderLogin() {
       <h3>Log in</h3>
       <label>Username</label><input id="lg-user" autocomplete="username">
       <label>Password</label><input id="lg-pass" type="password" autocomplete="current-password">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px">
+        <input type="checkbox" id="lg-remember" style="width:auto"> Stay logged in</label>
       <div class="btns"><button class="btn" id="lg-btn">Log in</button></div>
     </div>`;
   const submit = async () => {
@@ -253,7 +266,7 @@ function renderLogin() {
       const res = await fetch("/api/custom/auth-check", { headers: { Authorization: h } });
       if (!res.ok) throw 0;
     } catch { return toast("Invalid username or password", true); }
-    adminAuth = h; sessionStorage.setItem("adminAuth", h);
+    storeAdminAuth(h, el("lg-remember") && el("lg-remember").checked);
     toast("Logged in"); refreshBadge(); views.setup();
   };
   el("lg-btn").onclick = submit;
@@ -331,7 +344,10 @@ views.setup = async function () {
   app().innerHTML = helpBox + `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <h2 style="margin:0">Setup</h2>
-      <button class="btn small" id="logoutBtn">Log out</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn small" id="changePwBtn">Change password</button>
+        <button class="btn small" id="logoutBtn">Log out</button>
+      </div>
     </div>
     <div class="card" style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -377,6 +393,17 @@ views.setup = async function () {
     </div>
 
     ${locked ? `<div class="card" style="margin-top:18px">
+      <h3>Swap a team</h3>
+      <p class="muted">Replace one team with another - a wrong id, or a manager who's left. The
+        schedule and results are kept, just re-pointed to the new team.</p>
+      <div class="row">
+        <div style="flex:2"><label>Team to replace</label>
+          <select id="swapOld">${[...entriesA, ...entriesB].map((e) => `<option value="${e.entry_id}">${esc(e.name)}</option>`).join("")}</select></div>
+        <div style="flex:1"><label>New team ID</label><input id="swapNew" inputmode="numeric" placeholder="e.g. 254949"></div>
+        <div style="flex:0"><br><button class="btn pink" id="swapBtn">Swap</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px">
       <h3>Start a new season</h3>
       <p class="muted">Marks this season as finished - its table, fixtures and results stay viewable forever
         via the season picker in the top nav - and opens a blank Setup for a new one.</p>
@@ -412,8 +439,31 @@ views.setup = async function () {
     </div>`;
 
   el("logoutBtn").onclick = () => {
-    adminAuth = null; sessionStorage.removeItem("adminAuth");
+    clearAdminAuth();
     toast("Logged out"); refreshBadge(); views.setup();
+  };
+  if (el("swapBtn")) el("swapBtn").onclick = async () => {
+    const oldId = el("swapOld").value;
+    const newId = el("swapNew").value.trim();
+    if (!/^\d+$/.test(newId)) return toast("Enter a numeric new team ID", true);
+    const oldName = el("swapOld").options[el("swapOld").selectedIndex].text;
+    if (!confirm(`Replace ${oldName} with team ${newId}? Fixtures and results stay, re-pointed to the new team.`)) return;
+    const btn = el("swapBtn"); btn.disabled = true; btn.textContent = "Swapping…";
+    try { await api("/api/custom/swap-team", { method: "POST", body: JSON.stringify({ old_entry_id: Number(oldId), new_entry_id: Number(newId) }) }); }
+    catch (e) { btn.disabled = false; btn.textContent = "Swap"; return toast(e.message, true); }
+    toast("Team swapped"); refreshBadge(); populateMePicker(); views.setup();
+  };
+  if (el("changePwBtn")) el("changePwBtn").onclick = async () => {
+    const pw = prompt("New admin password (min 4 characters):");
+    if (pw === null) return;
+    if (pw.length < 4) return toast("Password must be at least 4 characters", true);
+    try { await api("/api/custom/password", { method: "POST", body: JSON.stringify({ new_password: pw }) }); }
+    catch (e) { return toast(e.message, true); }
+    // Re-auth with the new password so the current session stays valid.
+    const user = atob(adminAuth.slice(6)).split(":")[0];
+    const remember = !!localStorage.getItem("adminAuth");
+    storeAdminAuth("Basic " + btoa(user + ":" + pw), remember);
+    toast("Password changed");
   };
 
 
@@ -863,6 +913,7 @@ views.league = async function () {
   app().innerHTML = loadingHtml();
   const isAdmin = await ensureAdmin();
   if (token !== renderToken) return;
+  leagueAdmin = isAdmin;
   const archived = isArchivedSelected();
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">📊</div><div><b>Reading the table</b>
@@ -930,7 +981,11 @@ async function renderTables() {
   const qualified = new Set([...data.division_a.slice(0, 2), ...data.division_b.slice(0, 2)]
     .map((r) => r.entry_id));
   const me = String(myEntryId || "");
-  const tbl = (title, rows) => `<div class="card"><h3>${esc(title)}</h3>
+  // Rename pencil next to the division name - only for a logged-in admin, and not on archived seasons.
+  const editPencil = (divId, name) => (leagueAdmin && !isArchivedSelected() && divId)
+    ? ` <button class="mini-link" data-rename-div="${divId}" data-cur="${esc(name)}" title="Rename division">✏️</button>`
+    : "";
+  const tbl = (title, rows, divId) => `<div class="card"><h3>${esc(title)}${editPencil(divId, title)}</h3>
     <table><thead><tr><th>#</th><th>Manager</th><th class="num">P</th><th class="num">W</th>
       <th class="num">D</th><th class="num">L</th><th class="num">PF</th><th class="num">Pts</th></tr></thead>
     <tbody>${rows.map((r) => `<tr class="${qualified.has(r.entry_id) ? "qualified" : ""}${String(r.entry_id) === me ? " mine" : ""}">
@@ -938,8 +993,17 @@ async function renderTables() {
       <td class="num">${r.played}</td><td class="num">${r.won}</td><td class="num">${r.drawn}</td>
       <td class="num">${r.lost}</td><td class="num">${r.points_for}</td>
       <td class="num"><b>${r.h2h_points}</b></td></tr>`).join("")}</tbody></table></div>`;
+  const aName = data.division_a_name || "Division A", bName = data.division_b_name || "Division B";
   el("tables").innerHTML = `<div class="two-col">
-    ${tbl("Division A", data.division_a)}${tbl("Division B", data.division_b)}</div>`;
+    ${tbl(aName, data.division_a, data.division_a_id)}${tbl(bName, data.division_b, data.division_b_id)}</div>`;
+  el("tables").querySelectorAll("[data-rename-div]").forEach((btn) => btn.onclick = async () => {
+    const name = prompt("Division name:", btn.dataset.cur);
+    if (name === null) return;
+    if (!name.trim()) return toast("Name can't be empty", true);
+    try { await api(`/api/custom/divisions/${btn.dataset.renameDiv}/name`, { method: "POST", body: JSON.stringify({ name: name.trim() }) }); }
+    catch (e) { return toast(e.message, true); }
+    toast("Division renamed"); renderTables();
+  });
 }
 
 async function renderBracket() {

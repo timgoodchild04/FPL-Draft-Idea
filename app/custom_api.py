@@ -8,6 +8,7 @@ Two routers:
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import secrets
 from datetime import datetime, timezone
@@ -29,20 +30,36 @@ from app.settings_models import Setting
 
 LEAGUE_NAME_KEY = "league_name"
 DEFAULT_LEAGUE_NAME = "Branksbowl"
+ADMIN_PW_KEY = "admin_password_hash"
 
 
 def _league_name(s: Session) -> str:
     row = s.get(Setting, LEAGUE_NAME_KEY)
     return row.value if row and row.value else DEFAULT_LEAGUE_NAME
 
+
+def _hash_password(pw: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 120_000)
+    return f"{salt.hex()}${dk.hex()}"
+
+
+def _verify_password(pw: str, stored: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored.split("$", 1)
+        dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt_hex), 120_000)
+        return secrets.compare_digest(dk.hex(), dk_hex)
+    except Exception:
+        return False
+
 router = APIRouter(prefix="/api/seasons", tags=["custom-league"])
 current_router = APIRouter(prefix="/api/custom", tags=["custom-current"])
 
 
 def require_admin(authorization: str | None = Header(default=None)) -> bool:
-    """HTTP Basic gate for admin (setup) actions. Credentials from env, default admin/admin."""
+    """HTTP Basic gate for admin actions. Username from env (default 'admin').
+    Password: a hash set via the UI if present, otherwise the env/default 'admin'."""
     user = os.environ.get("ADMIN_USER", "admin")
-    pw = os.environ.get("ADMIN_PASS", "admin")
     unauth = HTTPException(401, "Admin login required", headers={"WWW-Authenticate": "Basic"})
     if not authorization or not authorization.startswith("Basic "):
         raise unauth
@@ -50,7 +67,14 @@ def require_admin(authorization: str | None = Header(default=None)) -> bool:
         u, p = base64.b64decode(authorization.split(" ", 1)[1]).decode().split(":", 1)
     except Exception:
         raise unauth
-    if not (secrets.compare_digest(u, user) and secrets.compare_digest(p, pw)):
+    if not secrets.compare_digest(u, user):
+        raise unauth
+    with Session(ENGINE) as s:
+        stored = s.get(Setting, ADMIN_PW_KEY)
+    if stored and stored.value:
+        if not _verify_password(p, stored.value):
+            raise unauth
+    elif not secrets.compare_digest(p, os.environ.get("ADMIN_PASS", "admin")):
         raise unauth
     return True
 
@@ -105,7 +129,7 @@ def _stage1_divisions(s: Session, season: Season) -> list[Division]:
 
 def _ensure_divisions(s: Session, season: Season) -> tuple[Division, Division]:
     divs = _stage1_divisions(s, season)
-    names = ["League 1 (Division A)", "League 2 (Division B)"]
+    names = ["Division A", "Division B"]
     while len(divs) < 2:
         tier = len(divs) + 1
         setup_league.create_division(s, season.id, stage=1, tier=tier, name=names[tier - 1])
@@ -201,6 +225,107 @@ def set_settings(body: SettingsIn, _admin: bool = Depends(require_admin)) -> dic
         s.add(row)
         s.commit()
         return {"league_name": name}
+
+
+class PasswordIn(BaseModel):
+    new_password: str
+
+
+@current_router.post("/password")
+def change_password(body: PasswordIn, _admin: bool = Depends(require_admin)) -> dict:
+    pw = body.new_password
+    if len(pw) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters.")
+    with Session(ENGINE) as s:
+        row = s.get(Setting, ADMIN_PW_KEY) or Setting(key=ADMIN_PW_KEY)
+        row.value = _hash_password(pw)
+        s.add(row)
+        s.commit()
+    return {"ok": True}
+
+
+class DivisionNameIn(BaseModel):
+    name: str
+
+
+@current_router.post("/divisions/{division_id}/name")
+def rename_division(division_id: int, body: DivisionNameIn,
+                    _admin: bool = Depends(require_admin)) -> dict:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Division name can't be empty.")
+    if len(name) > 40:
+        raise HTTPException(400, "Division name too long (max 40 characters).")
+    with Session(ENGINE) as s:
+        d = s.get(Division, division_id)
+        if d is None:
+            raise HTTPException(404, f"No division {division_id}")
+        d.name = name
+        s.add(d)
+        s.commit()
+        return {"id": division_id, "name": name}
+
+
+class SwapTeamIn(BaseModel):
+    old_entry_id: int
+    new_entry_id: int
+
+
+@current_router.post("/swap-team")
+def swap_team(body: SwapTeamIn, _admin: bool = Depends(require_admin)) -> dict:
+    """Replace one team with another across the current season, keeping the
+    schedule intact - for fixing a wrong id or a manager who's been replaced."""
+    old, new = body.old_entry_id, body.new_entry_id
+    if old == new:
+        raise HTTPException(400, "The two teams are the same.")
+    with Session(ENGINE) as s:
+        season = _current(s)
+        if season is None:
+            raise HTTPException(400, "No current season.")
+        div_ids = [d.id for d in _stage1_divisions(s, season)]
+        entry = s.exec(select(MirrorEntry).where(
+            MirrorEntry.division_id.in_(div_ids), MirrorEntry.entry_id == old)).first()
+        if entry is None:
+            raise HTTPException(400, f"Team {old} isn't in this season.")
+        if s.exec(select(MirrorEntry).where(
+                MirrorEntry.division_id.in_(div_ids), MirrorEntry.entry_id == new)).first():
+            raise HTTPException(400, f"Team {new} is already in this season.")
+        with httpx.Client() as client:
+            try:
+                name = _entry_name(fpldraft_client.fetch_entry_public(client, new), new)
+            except Exception:
+                raise HTTPException(400, f"Team id {new} isn't a valid FPL Draft team.")
+        entry.entry_id = new
+        entry.league_entry_id = new
+        entry.manager_name = name
+        s.add(entry)
+        for f in s.exec(select(Fixture).where(Fixture.season_id == season.id)).all():
+            changed = False
+            if f.home_entry == old:
+                f.home_entry = new; changed = True
+            if f.away_entry == old:
+                f.away_entry = new; changed = True
+            if changed:
+                s.add(f)
+        for r in s.exec(select(Rivalry).where(Rivalry.season_id == season.id)).all():
+            changed = False
+            if r.entry_a == old:
+                r.entry_a = new; changed = True
+            if r.entry_b == old:
+                r.entry_b = new; changed = True
+            if changed:
+                s.add(r)
+        s.exec(delete(EntryPoints).where(
+            EntryPoints.season_id == season.id, EntryPoints.entry_id == old))
+        s.commit()
+        # Pull the incoming team's points so the tables fill back in.
+        try:
+            from app.sync import sync_gameweeks_only
+            sync_gameweeks_only()
+            custom_league.sync_points(s, season)
+        except Exception:
+            pass
+        return {"swapped": {"old": old, "new": new, "name": name}}
 
 
 @current_router.get("/seasons")
@@ -518,10 +643,15 @@ def table(season_id: int | None = None) -> dict:
             return {"combined": [], "division_a": [], "division_b": []}
         meta = s.get(LeagueMeta, season.id)
         last = meta.points_synced_at if meta else None
+        divs = _stage1_divisions(s, season)
+        dmeta = {}
+        if len(divs) == 2:
+            dmeta = {"division_a_name": divs[0].name, "division_a_id": divs[0].id,
+                     "division_b_name": divs[1].name, "division_b_id": divs[1].id}
         try:
-            return {**custom_league.standings(s, season), "last_updated": last}
+            return {**custom_league.standings(s, season), **dmeta, "last_updated": last}
         except ValueError:
-            return {"combined": [], "division_a": [], "division_b": [], "last_updated": last}
+            return {"combined": [], "division_a": [], "division_b": [], **dmeta, "last_updated": last}
 
 
 @current_router.get("/playoffs")
