@@ -232,8 +232,15 @@ def playoffs(session: Session, season: Season) -> dict:
               for p in session.exec(select(EntryPoints).where(EntryPoints.season_id == season.id)).all()}
     finished = finished_gameweeks(session, season)
 
-    def score(entry_id: int, gws: list[int]) -> tuple[int, bool]:
+    def score(entry_id: int, gws: list[int]) -> tuple[int | None, bool]:
         done = all(gw in finished for gw in gws)
+        if not done:
+            # Don't surface a total at all until every constituent gameweek is
+            # confirmed finished - EntryPoints can still hold a stale row for one
+            # of these gameweek ids from an older real-world calendar mapping
+            # (e.g. last season's GW36-38), which must never masquerade as this
+            # season's not-yet-played playoff score.
+            return None, False
         total = sum(points.get((entry_id, gw), 0) for gw in gws)
         return total, done
 

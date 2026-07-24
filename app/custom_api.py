@@ -565,16 +565,6 @@ def fixtures(season_id: int | None = None) -> dict:
                for p in s.exec(select(EntryPoints).where(EntryPoints.season_id == season.id)).all()}
         rows = s.exec(
             select(Fixture).where(Fixture.season_id == season.id).order_by(Fixture.gameweek)).all()
-        weeks: dict[int, list] = {}
-        for f in rows:
-            weeks.setdefault(f.gameweek, []).append({
-                "home": names.get(f.home_entry, str(f.home_entry)),
-                "away": names.get(f.away_entry, str(f.away_entry)),
-                "home_id": f.home_entry, "away_id": f.away_entry,
-                "home_points": pts.get((f.home_entry, f.gameweek)),
-                "away_points": pts.get((f.away_entry, f.gameweek)),
-                "kind": f.kind,
-            })
 
         # An archived season is a frozen historic record - it must never change
         # again. Gameweek ids are reused every real-world FPL season (upserted
@@ -599,6 +589,26 @@ def fixtures(season_id: int | None = None) -> dict:
             if archived:
                 return None
             return gwmeta[gw].deadline_time if gw in gwmeta else None
+
+        def gw_points(entry_id: int, gw: int) -> int | None:
+            # A gameweek that isn't finished (or live) yet shouldn't surface a
+            # score at all - even if EntryPoints has a row for it from a stale
+            # sync against an older real-world calendar mapping of this same
+            # gameweek id. Only "finished"/"current" (live) reveal a number.
+            if gw_status(gw) == "upcoming":
+                return None
+            return pts.get((entry_id, gw))
+
+        weeks: dict[int, list] = {}
+        for f in rows:
+            weeks.setdefault(f.gameweek, []).append({
+                "home": names.get(f.home_entry, str(f.home_entry)),
+                "away": names.get(f.away_entry, str(f.away_entry)),
+                "home_id": f.home_entry, "away_id": f.away_entry,
+                "home_points": gw_points(f.home_entry, f.gameweek),
+                "away_points": gw_points(f.away_entry, f.gameweek),
+                "kind": f.kind,
+            })
 
         meta = s.get(LeagueMeta, season.id)
         return {
