@@ -576,7 +576,18 @@ def fixtures(season_id: int | None = None) -> dict:
                 "kind": f.kind,
             })
 
+        # An archived season is a frozen historic record - it must never change
+        # again. Gameweek ids are reused every real-world FPL season (upserted
+        # in app.sync), so trusting the live Gameweek table forever would let a
+        # future season's fresh "not finished yet" flags (and even a different
+        # deadline_time for the same id) bleed into an old, closed-out season's
+        # fixtures. finished_gameweeks() already guards standings()/playoffs()
+        # against this; the fixture list needs the same guarantee.
+        archived = season.archived_at is not None
+
         def gw_status(gw: int) -> str:
+            if archived:
+                return "finished"
             g = gwmeta.get(gw)
             if g is None:
                 return "upcoming"
@@ -584,12 +595,17 @@ def fixtures(season_id: int | None = None) -> dict:
                 return "finished"
             return "current" if g.is_current else "upcoming"
 
+        def gw_deadline(gw: int) -> str | None:
+            if archived:
+                return None
+            return gwmeta[gw].deadline_time if gw in gwmeta else None
+
         meta = s.get(LeagueMeta, season.id)
         return {
             "generated_at": meta.fixtures_generated_at if meta else None,
             "last_updated": meta.points_synced_at if meta else None,
             "gameweeks": [{"gameweek": gw,
-                           "deadline": gwmeta[gw].deadline_time if gw in gwmeta else None,
+                           "deadline": gw_deadline(gw),
                            "status": gw_status(gw), "matches": m}
                           for gw, m in sorted(weeks.items())],
         }
