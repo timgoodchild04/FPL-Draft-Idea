@@ -157,18 +157,23 @@ def _status(s: Session, season: Season) -> dict:
         select(Fixture).where(Fixture.season_id == season.id).limit(1)).first() is not None
     points_synced = s.exec(
         select(EntryPoints).where(EntryPoints.season_id == season.id).limit(1)).first() is not None
+    size = custom_league.DIVISION_SIZE
     sizes = [x["teams"] for x in divisions]
     both_filled = len(divisions) == 2 and all(n > 0 for n in sizes)
     equal = both_filled and len(set(sizes)) == 1 and sizes[0] >= 2
+    # Rosters can be saved part-filled, so "ready" means every seat has a team.
+    rosters_full = len(divisions) == 2 and all(n == size for n in sizes)
+    teams_missing = sum(max(0, size - n) for n in sizes) + size * (2 - len(divisions))
 
     meta = s.get(LeagueMeta, season.id)
     return {
         "has_season": True, "season_id": season.id,
         "divisions": divisions, "both_filled": both_filled, "sizes_equal": equal,
+        "division_size": size, "rosters_full": rosters_full, "teams_missing": teams_missing,
         "fixtures_generated": fixtures_generated, "points_synced": points_synced,
         "fixtures_generated_at": meta.fixtures_generated_at if meta else None,
         "points_synced_at": meta.points_synced_at if meta else None,
-        "can_generate": equal and not fixtures_generated,
+        "can_generate": rosters_full and not fixtures_generated,
     }
 
 
@@ -407,13 +412,15 @@ def rename_season(season_id: int, body: RenameSeasonIn, _admin: bool = Depends(r
 
 @current_router.post("/teams")
 def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
-    """Set each division's roster from team ids. Names are pulled from the site;
-    every id is validated first, so an invalid id blocks the save (not silently)."""
+    """Set each division's roster from team ids. Part-filled rosters are fine - save
+    the ids you have and add the rest later; fixture generation stays blocked until
+    both divisions are full. Names are pulled from the site; every id is validated
+    first, so an invalid id blocks the save (not silently)."""
     a, b = body.division_a, body.division_b
-    if len(a) != len(b):
-        raise HTTPException(400, f"Divisions must be equal size (got {len(a)} and {len(b)}).")
-    if len(a) < 2:
-        raise HTTPException(400, "Enter at least 2 team ids per division.")
+    size = custom_league.DIVISION_SIZE
+    if len(a) > size or len(b) > size:
+        raise HTTPException(400, f"A division holds at most {size} teams "
+                                 f"(got {len(a)} and {len(b)}).")
     ids = a + b
     if len(set(ids)) != len(ids):
         raise HTTPException(400, "Team ids must be unique - a team can't be in both divisions.")

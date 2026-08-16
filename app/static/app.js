@@ -236,7 +236,8 @@ async function refreshBadge() {
     el("statusBadge").textContent = !st.has_season ? "Not set up"
       : st.fixtures_generated ? "🔒 Fixtures locked"
       : st.can_generate ? "Ready to generate"
-      : st.both_filled ? "Check team counts" : "Awaiting teams";
+      : st.both_filled ? `Awaiting ${st.teams_missing} more team${st.teams_missing === 1 ? "" : "s"}`
+      : "Awaiting teams";
   } catch { el("statusBadge").textContent = ""; }
 }
 
@@ -291,12 +292,17 @@ views.setup = async function () {
   }
   if (token !== renderToken) return;
   const archivedSeasons = seasons.filter((sn) => !sn.is_current);
+  const size = st.division_size || ROSTER_ROWS;
+  const missing = (st.teams_missing != null) ? st.teams_missing : size * 2;
   const helpBox = help("Setup - enter teams, then generate",
     `<ol>
-       <li><b>Team IDs</b> - put 7 per division (the number in a team's URL). Names are
+       <li><b>Team IDs</b> - ${size} per division (the number in a team's URL). Names are
          pulled from the site automatically; invalid ids are rejected on save.</li>
-       <li><b>Generate fixtures</b> - builds the random 35-gameweek schedule and <b>locks
-         it</b> for the season (one time only). To redo it, start a new season instead.</li>
+       <li><b>Save as you go</b> - you don't need every id at once. Save the ones you
+         have and fill the blanks in later.</li>
+       <li><b>Generate fixtures</b> - available once all ${size * 2} teams are in. Builds the
+         random 35-gameweek schedule and <b>locks it</b> for the season (one time only).
+         To redo it, start a new season instead.</li>
      </ol>`);
 
   const divs = st.divisions || [{ entries: [] }, { entries: [] }];
@@ -304,7 +310,7 @@ views.setup = async function () {
   const entriesB = (divs[1] && divs[1].entries) || [];
   const allPlayers = [...entriesA, ...entriesB];
   const locked = st.has_season && st.fixtures_generated;
-  const rowCount = Math.max(ROSTER_ROWS, entriesA.length, entriesB.length);
+  const rowCount = Math.max(size, entriesA.length, entriesB.length);
 
   const rows = (side, entries) => Array.from({ length: rowCount }, (_, i) => {
     const e = entries[i] || {};
@@ -316,9 +322,13 @@ views.setup = async function () {
       </div>`;
   }).join("");
 
+  // Part-filled rosters are a normal, saveable state - say what's still missing
+  // rather than warning about it.
   let sizeNote = "";
-  if (st.both_filled && !st.sizes_equal)
-    sizeNote = `<p class="down">⚠ The divisions have different sizes (${divs[0].teams} vs ${divs[1].teams}). They must be equal to generate fixtures.</p>`;
+  if (!locked && !st.can_generate && st.has_season)
+    sizeNote = `<p class="muted">Saved so far: Division A ${divs[0] ? divs[0].teams : 0}/${size},
+      Division B ${divs[1] ? divs[1].teams : 0}/${size}. Blanks are fine - add the remaining
+      ${missing} team ID${missing === 1 ? "" : "s"} whenever you get them.</p>`;
 
   app().innerHTML = helpBox + `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -353,7 +363,10 @@ views.setup = async function () {
       <h3>2. Generate the season</h3>
       ${locked
         ? "<p>🔒 <b>Fixtures generated and locked.</b> The schedule is fixed for the season.</p>"
-        : '<p class="muted">Enabled once both divisions are saved and equal size.</p>'}
+        : st.can_generate
+          ? `<p class="muted">All ${size * 2} teams are in - you're ready to generate.</p>`
+          : `<p class="muted">Enabled once both divisions are full (${size} teams each) -
+             ${missing} still to add.</p>`}
       <div class="btns">
         ${locked
           ? '<button class="btn green" id="syncBtn">Sync latest results</button>'

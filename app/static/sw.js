@@ -1,7 +1,7 @@
 // Service worker: makes Branksbowl installable and load instantly offline.
 // The app *shell* (page, CSS, JS, icons) is cached; API calls always go to the
 // network so league data is never served stale.
-const CACHE = "branksbowl-v1";
+const CACHE = "branksbowl-v2";
 const SHELL = [
   "/",
   "/static/styles.css",
