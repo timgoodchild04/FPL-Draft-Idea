@@ -19,6 +19,11 @@ from app.models import Gameweek
 from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
 
 
+# Teams per division. Rosters can be saved part-filled (ids often arrive a few at
+# a time), but fixtures can't be generated until both divisions hit this number.
+DIVISION_SIZE = 7
+
+
 @dataclass
 class TeamRow:
     entry_id: int
@@ -61,11 +66,11 @@ def generate_and_store_schedule(session: Session, season: Season, seed: int | No
         raise ValueError("Fixtures are already generated and locked for this season.")
 
     a_entries, b_entries = collect_divisions(session, season)
-    if len(a_entries) != len(b_entries):
-        raise ValueError(f"Divisions must be equal size (got {len(a_entries)} and {len(b_entries)}).")
+    if len(a_entries) != DIVISION_SIZE or len(b_entries) != DIVISION_SIZE:
+        raise ValueError(f"Both divisions must be full ({DIVISION_SIZE} teams each) before "
+                         f"fixtures can be generated - Division A has {len(a_entries)}, "
+                         f"Division B has {len(b_entries)}.")
     k = len(a_entries)
-    if k < 2:
-        raise ValueError("Each division needs at least 2 teams.")
     rounds = (k - 1) * 3 + k * 2 + 3
 
     a_labels = [str(e.entry_id) for e in a_entries]
