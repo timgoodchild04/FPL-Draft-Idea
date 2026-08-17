@@ -504,6 +504,25 @@ def generate(seed: int | None = None, _admin: bool = Depends(require_admin)) -> 
         return {**summary, **_status(s, season)}
 
 
+@current_router.post("/extend-schedule")
+def extend_schedule(seed: int | None = None, _admin: bool = Depends(require_admin)) -> dict:
+    """Append one more regular-season gameweek without touching existing fixtures.
+
+    Brings a season that was locked to a shorter schedule up to full length. Safe
+    to expose because it only ever adds, and it refuses once the next gameweek
+    would collide with the playoffs - so it can't be run twice by accident.
+    """
+    with Session(ENGINE) as s:
+        season = _current(s)
+        if season is None:
+            raise HTTPException(400, "Set up your two leagues first.")
+        try:
+            added = custom_league.append_balanced_week(s, season, seed)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {**added, **_status(s, season)}
+
+
 @current_router.post("/sync-points")
 def sync_points(_admin: bool = Depends(require_admin)) -> dict:
     with Session(ENGINE) as s:
