@@ -202,13 +202,12 @@ def standings(session: Session, season: Season) -> dict:
 
 
 # --- playoffs ------------------------------------------------------------
-SEMI_GWS = [36, 37]   # semi-finals aggregated over these gameweeks
+SEMI_GWS = [37]       # semi-finals decided on this gameweek
 FINAL_GW = 38         # final decided on this gameweek
 
 
 def playoffs(session: Session, season: Season) -> dict:
-    """Top-2-per-division knockout: cross-division semis aggregated over
-    GW36-37, final on GW38.
+    """Top-2-per-division knockout: cross-division semis on GW37, final on GW38.
 
     Qualifiers are each division's top 2 (not the top 4 of the combined
     table), so one strong division can no longer shut the other out of the
@@ -243,7 +242,7 @@ def playoffs(session: Session, season: Season) -> dict:
             # Don't surface a total at all until every constituent gameweek is
             # confirmed finished - EntryPoints can still hold a stale row for one
             # of these gameweek ids from an older real-world calendar mapping
-            # (e.g. last season's GW36-38), which must never masquerade as this
+            # (e.g. last season's GW37-38), which must never masquerade as this
             # season's not-yet-played playoff score.
             return None, False
         total = sum(points.get((entry_id, gw), 0) for gw in gws)
