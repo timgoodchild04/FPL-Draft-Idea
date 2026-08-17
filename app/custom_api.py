@@ -590,8 +590,14 @@ def fixtures(season_id: int | None = None) -> dict:
         gwmeta = {g.id: g for g in s.exec(select(Gameweek)).all()}
         pts = {(p.entry_id, p.gameweek): p.points
                for p in s.exec(select(EntryPoints).where(EntryPoints.season_id == season.id)).all()}
+        # Sort by id too, not just gameweek: without it the order within a
+        # gameweek is whatever the engine hands back, which differs between
+        # Postgres and SQLite and can shift under Postgres after any UPDATE to
+        # the table. The shuffle below seeds off this order, so it has to be
+        # deterministic or the fixture list quietly reorders itself.
         rows = s.exec(
-            select(Fixture).where(Fixture.season_id == season.id).order_by(Fixture.gameweek)).all()
+            select(Fixture).where(Fixture.season_id == season.id)
+            .order_by(Fixture.gameweek, Fixture.id)).all()
 
         # An archived season is a frozen historic record - it must never change
         # again. Gameweek ids are reused every real-world FPL season (upserted

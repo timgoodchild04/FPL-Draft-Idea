@@ -131,7 +131,10 @@ def rebalance_home_away(session: Session, season: Season, seed: int | None = Non
     counts: Counter = Counter()
     swapped = 0
     for f in rows:
-        a, b = f.home_entry, f.away_entry
+        # Tie-break off the canonical pair, never off what's currently stored,
+        # so the outcome depends only on the fixture order and the seed - run it
+        # twice and you get the same answer instead of reshuffling every side.
+        a, b = _meeting_key(f.home_entry, f.away_entry)
         if counts[a] < counts[b]:
             home, away = a, b
         elif counts[b] < counts[a]:
