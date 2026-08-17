@@ -678,6 +678,20 @@ def playoffs(season_id: int | None = None) -> dict:
             return {"ready": False, "reason": str(e)}
 
 
+@current_router.get("/managers")
+def managers() -> dict:
+    """Every entry id we've ever seen -> that manager's live id and name.
+
+    FPL Draft retires an entry id when the season rolls over, so any id from a
+    past season is dead: it 404s on their site and it isn't the key anything
+    current is stored under. The UI folds historical ids onto the live one
+    through this map so profile links keep working from anywhere on the site.
+    """
+    with Session(ENGINE) as s:
+        return {"index": {str(eid): {"id": i.current_entry_id, "name": i.name}
+                          for eid, i in custom_league.identities_by_entry(s).items()}}
+
+
 @current_router.get("/records")
 def records() -> dict:
     with Session(ENGINE) as s:
