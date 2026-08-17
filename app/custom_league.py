@@ -97,12 +97,57 @@ def generate_and_store_schedule(session: Session, season: Season, seed: int | No
     # added separately so that a season already locked to N weeks can be brought
     # up to the same length without redrawing a single existing fixture.
     append_balanced_week(session, season, seed)
+    # The draw decides who plays whom; this decides who's listed first, which the
+    # draw would otherwise hand to whoever's entry id sorts lowest, every week.
+    rebalance_home_away(session, season, seed)
     total = rounds + 1
     return {"gameweeks": total, "teams": 2 * k, "fixtures": total * k}
 
 
 def _meeting_key(a: int, b: int) -> tuple[int, int]:
     return (a, b) if a < b else (b, a)
+
+
+def rebalance_home_away(session: Session, season: Season, seed: int | None = None) -> dict:
+    """Even out who gets listed first in a fixture, without moving any fixture.
+
+    The scheduler emits each pair in a canonical order - lexicographic on the
+    entry-id *label* - which is stable but not fair: whoever's id happens to
+    sort first is listed first in nearly every game they play, and it's a text
+    sort, so "14000" loses to "130618". Nothing in the scoring notices (home and
+    away are compared symmetrically), but on the fixtures page it reads as a
+    pecking order.
+
+    Walks the season in order and hands the top slot to whichever of the two has
+    had it less often, so everyone lands within a game of half. Only ever swaps
+    the two sides of a fixture - who plays whom, and in which gameweek, is
+    untouched.
+    """
+    rows = session.exec(
+        select(Fixture).where(Fixture.season_id == season.id)
+        .order_by(Fixture.gameweek, Fixture.id)
+    ).all()
+    rng = random.Random(season.id if seed is None else seed)
+    counts: Counter = Counter()
+    swapped = 0
+    for f in rows:
+        a, b = f.home_entry, f.away_entry
+        if counts[a] < counts[b]:
+            home, away = a, b
+        elif counts[b] < counts[a]:
+            home, away = b, a
+        else:
+            home, away = (a, b) if rng.random() < 0.5 else (b, a)
+        if home != f.home_entry:
+            f.home_entry, f.away_entry = home, away
+            session.add(f)
+            swapped += 1
+        counts[home] += 1
+    session.commit()
+    tally = sorted(counts.values())
+    return {"fixtures": len(rows), "swapped": swapped,
+            "listed_first_min": tally[0] if tally else 0,
+            "listed_first_max": tally[-1] if tally else 0}
 
 
 def _perfect_matching(a_ids: list[int], b_ids: list[int], allowed: set[tuple[int, int]],
