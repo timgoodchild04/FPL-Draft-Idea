@@ -667,8 +667,8 @@ async function renderFixtures() {
         <p>One match a week: your division ×3, the other division ×2, plus 3 random extra games.</p></div></div>
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win 3, draw 1. Ranked on points, then total FPL points (PF). Only finished gameweeks count.</p></div></div>
-      <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
-        <p>Top 2 from each division. Cross-division semis over GW36+37, then the final on GW38.</p></div></div>
+      <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW37-38</b>
+        <p>Top 2 from each division. Cross-division semis on GW37, then the final on GW38.</p></div></div>
     </div>`;
   const archived = isArchivedSelected();
   const header = `<h2>Fixtures ${archived ? '<span class="pill">📁 Finished season</span>' : ""}</h2>` + rulesPanel;
@@ -745,7 +745,7 @@ views.rules = async function () {
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win = 3pts, draw = 1pt, loss = 0. Real FPL points decide who wins each match-up.</p></div></div>
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Top-2-per-division playoff</b>
-        <p>Each division's top 2 go into a cross-division knockout, GW36-38.</p></div></div>
+        <p>Each division's top 2 go into a cross-division knockout, GW37-38.</p></div></div>
       <div class="rule"><div class="rule-ic">🗂️</div><div><b>Past seasons</b>
         <p>Every finished season stays viewable, read-only, via the season picker in the nav.</p></div></div>
       <div class="rule"><div class="rule-ic">🥇</div><div><b>Hall of Fame</b>
@@ -791,27 +791,29 @@ views.rules = async function () {
           season (PF)</b>.</li>
         <li>Division A and Division B each get their own table, and everyone also appears in one <b>combined
           overall table</b> - it's the combined table that decides the playoffs.</li>
-        <li><b>PF only totals the ${totalGws} regular-season gameweeks (GW1-${totalGws})</b> - gameweeks 36-38 feed
-          the playoffs instead (see below), so PF won't match the season-long total shown on the official FPL
-          Draft site until the playoffs are done too. Example: a manager sitting on 1512 PF after GW35 who then
-          scores 31, 40 and 34 in GW36-38 shows 1617 on FPL Draft's own site - the extra 105 points went into the
-          playoff bracket, not the regular-season table.</li>
+        <li><b>PF only totals the ${totalGws} regular-season gameweeks (GW1-${totalGws})</b> - GW36 is a spare week
+          with no fixture, and GW37-38 feed the playoffs instead (see below), so PF won't match the season-long
+          total shown on the official FPL Draft site. Example: a manager sitting on 1512 PF after GW35 who then
+          scores 31, 40 and 34 in GW36-38 shows 1617 on FPL Draft's own site - those extra 105 points aren't in
+          the regular-season table at all.</li>
       </ul>
     </div>
 
     <div class="card" style="margin-top:18px">
-      <h3>4. Playoffs - gameweeks 36 to 38</h3>
+      <h3>4. Playoffs - gameweeks 37 and 38</h3>
       <ul>
         <li>The <b>top 2 from each division</b> qualify - not the top 4 of the combined table - so one strong
           division can never shut the other out of the playoffs entirely.</li>
         <li><b>Semi-finals are cross-division:</b> a division's #1 faces the <b>other</b> division's #2 (A1 v B2,
-          B1 v A2), aggregated over <b>GW36 + GW37</b> (both gameweeks' points are added together - it isn't
-          decided on a single week). The two division winners can only meet each other in the final.</li>
+          B1 v A2), decided on <b>GW37 alone</b> - one gameweek, highest score goes through. The two division
+          winners can only meet each other in the final.</li>
         <li><b>Final:</b> the two semi-final winners meet on <b>GW38</b> to decide the champion.</li>
-        <li><b>Tie-break:</b> if a tie is level after its gameweek(s), whichever of the two actually finished
-          higher in the <b>combined</b> regular-season table goes through - not just whoever's the better seed
-          within their own division.</li>
-        <li>Points scored in GW36-38 only ever count towards the playoff bracket - they never get added back into
+        <li><b>Tie-break:</b> if a tie is level, whichever of the two actually finished higher in the
+          <b>combined</b> regular-season table goes through - not just whoever's the better seed within their
+          own division.</li>
+        <li><b>GW36 is a spare week</b> - the regular season ends at GW${totalGws} and the playoffs don't start
+          until GW37, so nothing that happens in GW36 counts anywhere.</li>
+        <li>Points scored in GW37-38 only ever count towards the playoff bracket - they never get added back into
           the regular-season table's PF, even for the two managers who reach the final.</li>
       </ul>
     </div>
@@ -875,8 +877,8 @@ views.league = async function () {
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">📊</div><div><b>Reading the table</b>
         <p>Head-to-head: win 3, draw 1. Ranked on points, then total FPL points (PF). Top 2 per division (highlighted) reach the playoffs.</p></div></div>
-      <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW36-38</b>
-        <p>Cross-division semis (A1 v B2, B1 v A2) aggregated over GW36+37, then the final on GW38.</p></div></div>
+      <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW37-38</b>
+        <p>Cross-division semis (A1 v B2, B1 v A2) on GW37, then the final on GW38.</p></div></div>
     </div>`;
   app().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
@@ -886,7 +888,7 @@ views.league = async function () {
     <div class="muted" id="lastUpd" style="margin:2px 0 10px"></div>` + rulesPanel + `
     <div id="liveNow"></div>
     <div id="tables">${loadingHtml("Loading table…")}</div>
-    <h3 style="margin-top:26px">Playoffs (GW36-38)</h3>
+    <h3 style="margin-top:26px">Playoffs (GW37-38)</h3>
     <div id="bracket">${loadingHtml("Loading playoffs…")}</div>`;
   if (el("syncBtn2")) el("syncBtn2").onclick = async () => {
     try { const r = await api("/api/custom/sync-points", { method: "POST" });
@@ -985,7 +987,8 @@ async function renderBracket() {
     const w = sf.winner;
     const hiWin = w && w.entry_id === sf.high_seed.entry_id;
     const loWin = w && w.entry_id === sf.low_seed.entry_id;
-    return `<div><div class="round-title">${esc(sf.name)} · GW36+37</div><div class="tie">
+    const gws = (sf.gameweeks || []).map((g) => "GW" + g).join(" + ");
+    return `<div><div class="round-title">${esc(sf.name)}${gws ? " · " + gws : ""}</div><div class="tie">
       ${line(sf.high_seed, sf.high_points, hiWin, sf.high_seed.seed_label)}
       ${line(sf.low_seed, sf.low_points, loWin, sf.low_seed.seed_label)}
     </div>${sf.status === "pending" ? '<div class="muted" style="font-size:12px;margin-top:4px">in progress</div>' : ""}</div>`;
