@@ -301,7 +301,7 @@ views.setup = async function () {
        <li><b>Save as you go</b> - you don't need every id at once. Save the ones you
          have and fill the blanks in later.</li>
        <li><b>Generate fixtures</b> - available once all ${size * 2} teams are in. Builds the
-         random 35-gameweek schedule and <b>locks it</b> for the season (one time only).
+         random 36-gameweek schedule and <b>locks it</b> for the season (one time only).
          To redo it, start a new season instead.</li>
      </ol>`);
 
@@ -663,8 +663,8 @@ async function renderFixtures() {
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
         <p>14 managers in two divisions of 7, each drafted separately on FPL Draft.</p></div></div>
-      <div class="rule"><div class="rule-ic">📅</div><div><b>35-game season</b>
-        <p>One match a week: your division ×3, the other division ×2, plus 3 random extra games.</p></div></div>
+      <div class="rule"><div class="rule-ic">📅</div><div><b>36-game season</b>
+        <p>One match a week: your division ×3, the other division ×2, 3 random extras and one balanced cross-division game.</p></div></div>
       <div class="rule"><div class="rule-ic">⚖️</div><div><b>Head-to-head scoring</b>
         <p>Win 3, draw 1. Ranked on points, then total FPL points (PF). Only finished gameweeks count.</p></div></div>
       <div class="rule"><div class="rule-ic">🏆</div><div><b>Playoffs · GW37-38</b>
@@ -726,7 +726,8 @@ views.rules = async function () {
   const divGames = (k - 1) * 3;
   const crossGames = k * 2;
   const extra = 3;
-  const totalGws = divGames + crossGames + extra;
+  const balanced = 1;                      // the evenly-drawn final cross-division week
+  const totalGws = divGames + crossGames + extra + balanced;
 
   app().innerHTML = `
     <h2>Rules</h2>
@@ -770,12 +771,14 @@ views.rules = async function () {
         <tbody>
           <tr><td>Each of the ${k - 1} others in their own division</td><td class="num">×3</td><td class="num">${divGames} games</td></tr>
           <tr><td>Each of the ${k} teams in the other division</td><td class="num">×2</td><td class="num">${crossGames} games</td></tr>
-          <tr><td>Extra games</td><td class="num">-</td><td class="num">${extra} games</td></tr>
+          <tr><td>Extra games, drawn at random</td><td class="num">-</td><td class="num">${extra} games</td></tr>
+          <tr><td>One more cross-division game, evenly drawn</td><td class="num">-</td><td class="num">${balanced} game</td></tr>
           <tr><td><b>Total</b></td><td></td><td class="num"><b>${totalGws} games</b></td></tr>
         </tbody>
       </table>
-      <p class="muted" style="margin-top:10px">The ${extra} extra games are drawn at random. The whole schedule is
-        drawn once, randomly (no team is advantaged),
+      <p class="muted" style="margin-top:10px">The ${extra} extra games are drawn at random. The last game isn't:
+        it pairs everyone with a team from the other division they've met the fewest times, so nobody gets a softer
+        or harder draw out of it. The whole schedule is drawn once, randomly (no team is advantaged),
         then <b>locked</b> for the season - the only way to get a fresh schedule is to start a new season
         on Setup, which marks this one finished rather than wiping it.</p>
     </div>
@@ -791,11 +794,11 @@ views.rules = async function () {
           season (PF)</b>.</li>
         <li>Division A and Division B each get their own table, and everyone also appears in one <b>combined
           overall table</b> - it's the combined table that decides the playoffs.</li>
-        <li><b>PF only totals the ${totalGws} regular-season gameweeks (GW1-${totalGws})</b> - GW36 is a spare week
-          with no fixture, and GW37-38 feed the playoffs instead (see below), so PF won't match the season-long
-          total shown on the official FPL Draft site. Example: a manager sitting on 1512 PF after GW35 who then
-          scores 31, 40 and 34 in GW36-38 shows 1617 on FPL Draft's own site - those extra 105 points aren't in
-          the regular-season table at all.</li>
+        <li><b>PF only totals the ${totalGws} regular-season gameweeks (GW1-${totalGws})</b> - GW37-38 feed the
+          playoffs instead (see below), so PF won't match the season-long total shown on the official FPL Draft
+          site until the playoffs are done too. Example: a manager sitting on 1543 PF after GW36 who then scores
+          40 and 34 shows 1617 on FPL Draft's own site - the extra 74 points went into the playoff bracket, not
+          the regular-season table.</li>
       </ul>
     </div>
 
@@ -811,8 +814,6 @@ views.rules = async function () {
         <li><b>Tie-break:</b> if a tie is level, whichever of the two actually finished higher in the
           <b>combined</b> regular-season table goes through - not just whoever's the better seed within their
           own division.</li>
-        <li><b>GW36 is a spare week</b> - the regular season ends at GW${totalGws} and the playoffs don't start
-          until GW37, so nothing that happens in GW36 counts anywhere.</li>
         <li>Points scored in GW37-38 only ever count towards the playoff bracket - they never get added back into
           the regular-season table's PF, even for the two managers who reach the final.</li>
       </ul>

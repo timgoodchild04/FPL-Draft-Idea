@@ -6,6 +6,8 @@ fixtures (win 3 / draw 1 / loss 0, tie-break = total season points).
 """
 from __future__ import annotations
 
+import random
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -90,7 +92,95 @@ def generate_and_store_schedule(session: Session, season: Season, seed: int | No
     meta.fixtures_generated_at = datetime.now(timezone.utc).isoformat()
     session.add(meta)
     session.commit()
-    return {"gameweeks": rounds, "teams": 2 * k, "fixtures": rounds * k}
+
+    # The random draw above fills rounds 1..N; the last regular-season week is
+    # added separately so that a season already locked to N weeks can be brought
+    # up to the same length without redrawing a single existing fixture.
+    append_balanced_week(session, season, seed)
+    total = rounds + 1
+    return {"gameweeks": total, "teams": 2 * k, "fixtures": total * k}
+
+
+def _meeting_key(a: int, b: int) -> tuple[int, int]:
+    return (a, b) if a < b else (b, a)
+
+
+def _perfect_matching(a_ids: list[int], b_ids: list[int], allowed: set[tuple[int, int]],
+                      rng: random.Random) -> list[tuple[int, int]] | None:
+    """Pair every Division A team with a Division B team using only `allowed`
+    pairs (Kuhn's augmenting-path algorithm). None if no perfect matching exists.
+    """
+    adj = {a: [b for b in b_ids if _meeting_key(a, b) in allowed] for a in a_ids}
+    for a in adj:
+        rng.shuffle(adj[a])
+    taken: dict[int, int] = {}   # b -> a
+
+    def assign(a: int, seen: set[int]) -> bool:
+        for b in adj[a]:
+            if b in seen:
+                continue
+            seen.add(b)
+            if b not in taken or assign(taken[b], seen):
+                taken[b] = a
+                return True
+        return False
+
+    order = a_ids[:]
+    rng.shuffle(order)
+    for a in order:
+        if not assign(a, set()):
+            return None
+    return [(a, b) for b, a in taken.items()]
+
+
+def append_balanced_week(session: Session, season: Season, seed: int | None = None) -> dict:
+    """Add one more regular-season gameweek on top of whatever is already there.
+
+    Every existing fixture is left exactly as drawn - this only appends - so a
+    schedule that's already locked in (and possibly half-played) can be extended
+    without anyone's fixture list changing underneath them.
+
+    The added week is a single cross-division round: each manager faces someone
+    from the other division that they've met the fewest times. That makes it the
+    most balanced week in the season - unlike the random extras drawn at
+    generation time, nobody can land a softer or harder opponent out of it.
+    """
+    a_entries, b_entries = collect_divisions(session, season)
+    if len(a_entries) != len(b_entries) or not a_entries:
+        raise ValueError("Both divisions must be the same, non-zero size to extend the schedule.")
+
+    existing = session.exec(select(Fixture).where(Fixture.season_id == season.id)).all()
+    if not existing:
+        raise ValueError("No fixtures to extend - generate the schedule first.")
+    next_gw = max(f.gameweek for f in existing) + 1
+    if next_gw >= min(SEMI_GWS):
+        raise ValueError(f"GW{next_gw} is a playoff week - the regular season can't run into it.")
+
+    counts: Counter = Counter()
+    for f in existing:
+        counts[_meeting_key(f.home_entry, f.away_entry)] += 1
+
+    a_ids = [e.entry_id for e in a_entries]
+    b_ids = [e.entry_id for e in b_entries]
+    cross = [_meeting_key(x, y) for x in a_ids for y in b_ids]
+    fewest = min(counts.get(p, 0) for p in cross)
+
+    rng = random.Random(seed)
+    pairs = None
+    # Ideally everyone plays someone they've met the minimum number of times; if
+    # the extras happen to make that impossible, widen the net a meeting at a time.
+    for limit in range(fewest, fewest + len(a_ids) + 1):
+        pairs = _perfect_matching(a_ids, b_ids, {p for p in cross if counts.get(p, 0) <= limit}, rng)
+        if pairs:
+            break
+    if pairs is None:  # unreachable for equal divisions - every cross pair is allowed by then
+        raise RuntimeError("Could not build a balanced extra gameweek.")
+
+    for home, away in pairs:
+        session.add(Fixture(season_id=season.id, gameweek=next_gw,
+                            home_entry=home, away_entry=away, kind="cross"))
+    session.commit()
+    return {"gameweek": next_gw, "matches": len(pairs), "met_before": fewest}
 
 
 # --- weekly points -------------------------------------------------------
