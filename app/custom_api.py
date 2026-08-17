@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import random
 import secrets
 from datetime import datetime, timezone
 
@@ -636,6 +637,13 @@ def fixtures(season_id: int | None = None) -> dict:
                 "kind": f.kind,
             })
 
+        # Stored order is the order the scheduler's backtracking happened to
+        # settle on, which favours whoever sits early in the team list - so the
+        # same managers head up every gameweek card. Reshuffle per gameweek from
+        # a fixed seed: still stable for everyone viewing, but nobody's default.
+        for gw, m in weeks.items():
+            random.Random(f"{season.id}:{gw}").shuffle(m)
+
         meta = s.get(LeagueMeta, season.id)
         return {
             "generated_at": meta.fixtures_generated_at if meta else None,
@@ -676,6 +684,21 @@ def playoffs(season_id: int | None = None) -> dict:
             return custom_league.playoffs(s, season)
         except ValueError as e:
             return {"ready": False, "reason": str(e)}
+
+
+@current_router.post("/rebalance-sides")
+def rebalance_sides(seed: int | None = None, _admin: bool = Depends(require_admin)) -> dict:
+    """Even out who's listed first in each fixture on an already-locked season.
+
+    Purely presentational: it swaps the two sides of a fixture and nothing else,
+    so the draw, the gameweeks and every result stand. New seasons get this at
+    generation time; this is for one drawn before the balancing existed.
+    """
+    with Session(ENGINE) as s:
+        season = _current(s)
+        if season is None:
+            raise HTTPException(400, "Set up your two leagues first.")
+        return {**custom_league.rebalance_home_away(s, season, seed), **_status(s, season)}
 
 
 @current_router.get("/managers")
