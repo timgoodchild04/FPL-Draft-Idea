@@ -4,6 +4,28 @@
 // localStorage = "stay logged in" (survives closing the tab); sessionStorage = just this session.
 let adminAuth = sessionStorage.getItem("adminAuth") || localStorage.getItem("adminAuth") || null;
 let myEntryId = localStorage.getItem("myEntryId") || "";  // viewer's chosen team
+
+// Any entry id we've ever recorded -> that manager's current one. FPL Draft
+// reissues entry ids at the season rollover and retires the old ones, so an id
+// from a past season identifies nobody: it 404s on their site and it isn't what
+// this season's data is keyed under. Everything that links to a manager goes
+// through liveEntryId() so it lands on the right person either way.
+let managerIndex = {};
+const liveEntryId = (id) => (managerIndex[id] && managerIndex[id].id) || id;
+
+async function loadManagerIndex() {
+  try {
+    const d = await api("/api/custom/managers");
+    managerIndex = (d && d.index) || {};
+  } catch { managerIndex = {}; }   // fall back to raw ids rather than breaking the page
+  // The viewer's saved "my team" is an entry id too, so it goes stale the same
+  // way - left alone, a returning manager silently loses their highlighting.
+  const mine = managerIndex[myEntryId];
+  if (mine && String(mine.id) !== String(myEntryId)) {
+    myEntryId = String(mine.id);
+    localStorage.setItem("myEntryId", myEntryId);
+  }
+}
 function storeAdminAuth(h, remember) {
   adminAuth = h;
   if (remember) { localStorage.setItem("adminAuth", h); sessionStorage.removeItem("adminAuth"); }
@@ -630,15 +652,18 @@ views.fixtures = async function () {
 };
 
 // Shared wherever a manager's name is shown - links out to their public FPL
-// Draft history page (no login needed, confirmed working: /entry/{id}/history).
+// Draft history page (no login needed: /entry/{id}/history). Always resolve the
+// id first: FPL Draft issues a new entry id every season and retires the old
+// one, so a name shown from a past season (a trophy, an all-time record) carries
+// an id that 404s on their site.
 function mgrLink(m) {
-  return `<a class="mgr-link" href="https://draft.premierleague.com/entry/${m.entry_id}/history" `
+  return `<a class="mgr-link" href="https://draft.premierleague.com/entry/${liveEntryId(m.entry_id)}/history" `
     + `target="_blank" rel="noopener noreferrer">${esc(m.name)}</a>`;
 }
 // Same, plus a small icon into this site's own manager profile page.
 function mgrCell(m) {
   return `${mgrLink(m)} <button class="mini-link" title="View profile" `
-    + `onclick="showManagerProfile(${m.entry_id})">📊</button>`;
+    + `onclick="showManagerProfile(${liveEntryId(m.entry_id)})">📊</button>`;
 }
 
 // Shared by Fixtures' gameweek grid and League's "Live now" card.
@@ -1141,14 +1166,21 @@ function initToTop() {
 }
 
 // --- boot -----------------------------------------------------------------
-loadBranding();
-initBrandEdit();
-initToTop();
-initThemeToggle();
-initSetupCog();
-populateMePicker();
-populateSeasonPicker();
-refreshBadge();
-// Return to whatever tab was open if this is a refresh, not a fresh visit.
-const savedView = sessionStorage.getItem("activeView");
-setView(views[savedView] ? savedView : "league");
+(async function boot() {
+  loadBranding();
+  initBrandEdit();
+  initToTop();
+  initThemeToggle();
+  initSetupCog();
+  // Before anything renders: manager links and the viewer's saved team both key
+  // off entry ids, which go stale every season rollover. Show the spinner first
+  // so a cold start on Render doesn't sit on an empty page while this lands.
+  app().innerHTML = loadingHtml();
+  await loadManagerIndex();
+  populateMePicker();
+  populateSeasonPicker();
+  refreshBadge();
+  // Return to whatever tab was open if this is a refresh, not a fresh visit.
+  const savedView = sessionStorage.getItem("activeView");
+  setView(views[savedView] ? savedView : "league");
+})();

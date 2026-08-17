@@ -381,14 +381,71 @@ def playoffs(session: Session, season: Season) -> dict:
 def all_manager_names(session: Session) -> dict[int, str]:
     """entry_id -> manager_name, from every MirrorEntry ever recorded.
 
-    MirrorEntry.entry_id is the durable, global FPL Draft team id (see
-    mirror_models.py) - the same identity a manager keeps across seasons - so
-    this is the right key for anything spanning season boundaries.
+    Note this is keyed per *entry*, not per person - the same manager appears
+    under a different key each season (see manager_identities). It's the right
+    lookup for labelling one specific team in one specific season, and the wrong
+    one for anything that needs to follow someone across seasons.
     """
     rows = session.exec(
         select(MirrorEntry).where(MirrorEntry.entry_id != None).order_by(MirrorEntry.id)  # noqa: E711
     ).all()
     return {e.entry_id: e.manager_name for e in rows}  # later rows win on repeats
+
+
+def _identity_key(name: str) -> str:
+    """Fold a manager's name into a key that survives a season rollover."""
+    return " ".join((name or "").split()).casefold()
+
+
+@dataclass
+class ManagerIdentity:
+    """One real person, across however many FPL Draft entries they've had."""
+
+    key: str
+    name: str                 # most recent spelling of their name
+    entry_ids: list[int]      # every entry id they've used, first appearance first
+    current_entry_id: int     # the newest - the only one FPL Draft still serves
+
+
+def manager_identities(session: Session) -> dict[str, ManagerIdentity]:
+    """Every manager we've ever recorded, folded together across seasons.
+
+    FPL Draft issues a fresh entry id each season and retires the old one - last
+    season's /entry/{id}/ 404s outright - so an entry_id identifies a team in a
+    season, not a person. The API exposes no account id either (league_entries
+    carries only the entry id, the team name and the player's name), so the name
+    on the account is the only thing that carries across a rollover.
+
+    Rows are walked oldest season first, so the newest spelling of a name and
+    the live entry id both win.
+    """
+    rows = session.exec(
+        select(MirrorEntry, Division.season_id)
+        .join(Division, Division.id == MirrorEntry.division_id)
+        .where(MirrorEntry.entry_id != None)  # noqa: E711
+        .order_by(Division.season_id, MirrorEntry.id)
+    ).all()
+
+    out: dict[str, ManagerIdentity] = {}
+    for entry, _season_id in rows:
+        # A nameless entry can't be matched to anyone, so keep it on its own key
+        # rather than collapsing every nameless entry into a single "person".
+        key = _identity_key(entry.manager_name) or f"entry:{entry.entry_id}"
+        ident = out.get(key)
+        if ident is None:
+            out[key] = ManagerIdentity(key, entry.manager_name, [entry.entry_id], entry.entry_id)
+            continue
+        if entry.entry_id not in ident.entry_ids:
+            ident.entry_ids.append(entry.entry_id)
+        ident.name = entry.manager_name or ident.name
+        ident.current_entry_id = entry.entry_id
+    return out
+
+
+def identities_by_entry(session: Session) -> dict[int, ManagerIdentity]:
+    """entry_id -> the person it belongs to; every id they've ever had maps here."""
+    return {eid: ident for ident in manager_identities(session).values()
+            for eid in ident.entry_ids}
 
 
 # --- league records / hall of fame -----------------------------------------
@@ -400,10 +457,22 @@ def league_records(session: Session) -> dict:
     against seasons that played a full schedule.
     """
     names = all_manager_names(session)
+    idents = identities_by_entry(session)
+
+    def who(eid: int) -> tuple[str, str, int]:
+        """(identity key, display name, id worth linking to) for an entry id."""
+        ident = idents.get(eid)
+        if ident is None:
+            return f"entry:{eid}", names.get(eid, f"Entry {eid}"), eid
+        return ident.key, ident.name, ident.current_entry_id
+
     highest_gw = None
     biggest_margin = None
     season_totals: list[dict] = []
-    timeline: dict[int, list[tuple[int, int, str]]] = {}
+    # Keyed by person, not by entry, so a run that carries over a season break
+    # is still one streak - the manager's entry id changes, the manager doesn't.
+    timeline: dict[str, list[tuple[int, int, str]]] = {}
+    streak_who: dict[str, tuple[str, int]] = {}
 
     for season in session.exec(select(Season)).all():
         finished = finished_gameweeks(session, season)
@@ -417,12 +486,14 @@ def league_records(session: Session) -> dict:
                 continue
             totals[eid] = totals.get(eid, 0) + pts
             if highest_gw is None or pts > highest_gw["points"]:
-                highest_gw = {"entry_id": eid, "name": names.get(eid, f"Entry {eid}"),
+                _, name, link = who(eid)
+                highest_gw = {"entry_id": link, "name": name,
                              "season_name": season.name, "gameweek": gw, "points": pts}
 
         if season.archived_at:
             for eid, total in totals.items():
-                season_totals.append({"entry_id": eid, "name": names.get(eid, f"Entry {eid}"),
+                _, name, link = who(eid)
+                season_totals.append({"entry_id": link, "name": name,
                                       "season_name": season.name, "total": total})
 
         for f in session.exec(select(Fixture).where(Fixture.season_id == season.id)).all():
@@ -434,29 +505,34 @@ def league_records(session: Session) -> dict:
             margin = abs(hp - ap)
             if margin > 0 and (biggest_margin is None or margin > biggest_margin["margin"]):
                 winner, loser = (f.home_entry, f.away_entry) if hp > ap else (f.away_entry, f.home_entry)
+                _, wname, wlink = who(winner)
+                _, lname, llink = who(loser)
                 biggest_margin = {
-                    "winner_id": winner, "winner": names.get(winner, f"Entry {winner}"),
-                    "loser_id": loser, "loser": names.get(loser, f"Entry {loser}"),
+                    "winner_id": wlink, "winner": wname,
+                    "loser_id": llink, "loser": lname,
                     "season_name": season.name, "gameweek": f.gameweek, "margin": margin,
                     "winner_points": max(hp, ap), "loser_points": min(hp, ap),
                 }
             result_h = "W" if hp > ap else "L" if hp < ap else "D"
             result_a = "W" if ap > hp else "L" if ap < hp else "D"
-            timeline.setdefault(f.home_entry, []).append((season.id, f.gameweek, result_h))
-            timeline.setdefault(f.away_entry, []).append((season.id, f.gameweek, result_a))
+            for eid, result in ((f.home_entry, result_h), (f.away_entry, result_a)):
+                key, name, link = who(eid)
+                timeline.setdefault(key, []).append((season.id, f.gameweek, result))
+                streak_who[key] = (name, link)
 
     best_win_streak = {"entry_id": None, "name": None, "length": 0}
     best_unbeaten_streak = {"entry_id": None, "name": None, "length": 0}
-    for eid, games in timeline.items():
+    for key, games in timeline.items():
         games.sort(key=lambda g: (g[0], g[1]))
+        name, link = streak_who[key]
         win_run = unbeaten_run = 0
         for _, _, result in games:
             win_run = win_run + 1 if result == "W" else 0
             unbeaten_run = unbeaten_run + 1 if result in ("W", "D") else 0
             if win_run > best_win_streak["length"]:
-                best_win_streak = {"entry_id": eid, "name": names.get(eid, f"Entry {eid}"), "length": win_run}
+                best_win_streak = {"entry_id": link, "name": name, "length": win_run}
             if unbeaten_run > best_unbeaten_streak["length"]:
-                best_unbeaten_streak = {"entry_id": eid, "name": names.get(eid, f"Entry {eid}"), "length": unbeaten_run}
+                best_unbeaten_streak = {"entry_id": link, "name": name, "length": unbeaten_run}
 
     season_totals.sort(key=lambda r: r["total"], reverse=True)
     return {
@@ -500,22 +576,26 @@ def manager_profile(session: Session, entry_id: int) -> dict | None:
     recent season they've appeared in (current if they're in it, else their
     last one) - the season log isn't limited to any one selected season since
     a manager's profile is inherently a cross-season view.
+
+    Accepts *any* entry id the manager has ever held, not just their live one,
+    because FPL Draft reissues these every season - so a link off a past
+    season's trophy or an old bookmark still lands on the full profile rather
+    than an empty one.
     """
-    names = all_manager_names(session)
-    if entry_id not in names:
+    ident = identities_by_entry(session).get(entry_id)
+    if ident is None:
         return None
+    mine = set(ident.entry_ids)
+    names = all_manager_names(session)
 
     career = {"seasons_played": 0, "wins": 0, "draws": 0, "losses": 0, "points_for": 0}
     latest_season = None
     latest_log: list[dict] = []
 
     for season in session.exec(select(Season).order_by(Season.id)).all():
-        fixtures = session.exec(
-            select(Fixture).where(
-                Fixture.season_id == season.id,
-                (Fixture.home_entry == entry_id) | (Fixture.away_entry == entry_id),
-            )
-        ).all()
+        fixtures = [f for f in session.exec(
+            select(Fixture).where(Fixture.season_id == season.id)).all()
+            if f.home_entry in mine or f.away_entry in mine]
         if not fixtures:
             continue
         finished = finished_gameweeks(session, season)
@@ -527,10 +607,11 @@ def manager_profile(session: Session, entry_id: int) -> dict | None:
         for f in sorted(fixtures, key=lambda fx: fx.gameweek):
             if f.gameweek not in finished:
                 continue
-            opp = f.away_entry if f.home_entry == entry_id else f.home_entry
-            if (entry_id, f.gameweek) not in points or (opp, f.gameweek) not in points:
+            me = f.home_entry if f.home_entry in mine else f.away_entry
+            opp = f.away_entry if f.home_entry in mine else f.home_entry
+            if (me, f.gameweek) not in points or (opp, f.gameweek) not in points:
                 continue
-            own, other = points[(entry_id, f.gameweek)], points[(opp, f.gameweek)]
+            own, other = points[(me, f.gameweek)], points[(opp, f.gameweek)]
             result = "W" if own > other else "L" if own < other else "D"
             career["wins" if result == "W" else "losses" if result == "L" else "draws"] += 1
             career["points_for"] += own
@@ -546,15 +627,15 @@ def manager_profile(session: Session, entry_id: int) -> dict | None:
     if latest_season is not None:
         try:
             a_entries, b_entries = collect_divisions(session, latest_season)
-            if entry_id in {e.entry_id for e in a_entries}:
+            if mine & {e.entry_id for e in a_entries}:
                 division = "A"
-            elif entry_id in {e.entry_id for e in b_entries}:
+            elif mine & {e.entry_id for e in b_entries}:
                 division = "B"
         except ValueError:
             division = None
 
     return {
-        "entry_id": entry_id, "name": names[entry_id], "career": career,
+        "entry_id": ident.current_entry_id, "name": ident.name, "career": career,
         "season": None if latest_season is None else {
             "season_id": latest_season.id, "season_name": latest_season.name,
             "division": division, "log": latest_log,
