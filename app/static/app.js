@@ -159,6 +159,18 @@ function setView(name) {
 document.querySelectorAll("#tabs button").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
 
+// While a live gameweek's on screen, keep its scores moving without the user
+// having to reload - a plain interval that stops itself the moment the
+// viewer navigates away (renderToken no longer matches).
+let liveTickerTimer = null;
+function startLiveTicker(token, tick, intervalMs = 60000) {
+  if (liveTickerTimer) clearInterval(liveTickerTimer);
+  liveTickerTimer = setInterval(() => {
+    if (renderToken !== token) { clearInterval(liveTickerTimer); liveTickerTimer = null; return; }
+    tick();
+  }, intervalMs);
+}
+
 // A past (archived) season is picked by id; the current one is always "no param".
 function seasonParam() { return selectedSeasonId ? `season_id=${selectedSeasonId}` : ""; }
 function withSeason(path) {
@@ -649,6 +661,12 @@ views.fixtures = async function () {
     if (token !== renderToken) return;
     toast("Results updated"); renderFixtures();
   }
+  if (!isArchivedSelected()) {
+    startLiveTicker(token, async () => {
+      await maybeRefresh().catch(() => {});
+      if (renderToken === token) renderFixtures(true);
+    });
+  }
 };
 
 // Shared wherever a manager's name is shown - links out to their public FPL
@@ -745,7 +763,7 @@ async function showMatchup(gw, home, away, homeName, awayName) {
   }
 }
 
-async function renderFixtures() {
+async function renderFixtures(background) {
   const token = renderToken;
   const rulesPanel = `<div class="rules">
       <div class="rule"><div class="rule-ic">🏟️</div><div><b>Two divisions</b>
@@ -759,16 +777,21 @@ async function renderFixtures() {
     </div>`;
   const archived = isArchivedSelected();
   const header = `<h2>Fixtures ${archived ? '<span class="pill">📁 Finished season</span>' : ""}</h2>` + rulesPanel;
-  app().innerHTML = header + loadingHtml("Loading fixtures…");
+  // A background (auto) refresh keeps whatever's already on screen showing
+  // while it fetches, then swaps in the new numbers in one go - no flash to
+  // a spinner just because a live score ticked over.
+  if (!background) app().innerHTML = header + loadingHtml("Loading fixtures…");
   let data;
   try { data = await api(withSeason("/api/custom/fixtures")); }
   catch (e) {
+    if (background) return;  // keep showing the last good render rather than an error over it
     const msg = await friendlyErrorHtml("Couldn't load fixtures - " + e.message);
     if (token === renderToken) app().innerHTML = header + msg;
     return;
   }
   if (token !== renderToken) return;
   if (!data.gameweeks.length) {
+    if (background) return;
     app().innerHTML = header + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
     return;
   }
@@ -783,7 +806,8 @@ async function renderFixtures() {
   };
   const lockbar = data.generated_at
     ? `<div class="lockbar">🔒 Fixtures locked in on <b>${fmt(data.generated_at, true)}</b></div>` : "";
-  const updated = `<div class="muted" style="margin:-4px 0 14px">Results updated ${timeAgo(data.last_updated)}</div>`;
+  const updated = `<div class="muted" style="margin:-4px 0 14px">Results updated ${timeAgo(data.last_updated)}
+      <button class="mini-link" id="refreshFixturesBtn" title="Refresh now">🔄</button></div>`;
   const legend = `<div class="legend">
       <span><span class="dot" style="background:var(--accent)"></span> Current gameweek</span>
       <span><span class="dot" style="background:var(--accent-soft)"></span> Upcoming</span>
@@ -804,8 +828,17 @@ async function renderFixtures() {
     );
   });
 
-  const cur = data.gameweeks.find((w) => w.status === "current");
-  if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  el("refreshFixturesBtn").onclick = async () => {
+    const ok = await maybeRefresh();
+    if (token !== renderToken) return;
+    toast(ok ? "Results updated" : "Already up to date");
+    renderFixtures(true);
+  };
+
+  if (!background) {
+    const cur = data.gameweeks.find((w) => w.status === "current");
+    if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  }
 };
 
 // ============================ RULES =======================================
@@ -978,23 +1011,23 @@ views.league = async function () {
   app().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0">League ${archived ? '<span class="pill">📁 Finished season</span>' : ""}</h2>
-      ${isAdmin && !archived ? '<button class="btn small green" id="syncBtn2">Sync latest results</button>' : ""}
     </div>
     <div class="muted" id="lastUpd" style="margin:2px 0 10px"></div>` + rulesPanel + `
     <div id="liveNow"></div>
     <div id="tables">${loadingHtml("Loading table…")}</div>
     <h3 style="margin-top:26px">Playoffs (GW37-38)</h3>
     <div id="bracket">${loadingHtml("Loading playoffs…")}</div>`;
-  if (el("syncBtn2")) el("syncBtn2").onclick = async () => {
-    try { const r = await api("/api/custom/sync-points", { method: "POST" });
-      toast(`Synced ${r.teams} teams`); } catch (e) { return toast(e.message, true); }
-    renderTables(); renderBracket(); renderLiveNow();
-  };
   await Promise.all([renderTables(), renderBracket(), renderLiveNow()]);
   if (token !== renderToken) return;
   if (!archived && await maybeRefresh()) {
     if (token !== renderToken) return;
     toast("Results updated"); renderTables(); renderBracket(); renderLiveNow();
+  }
+  if (!archived) {
+    startLiveTicker(token, async () => {
+      await maybeRefresh().catch(() => {});
+      if (renderToken === token) { renderTables(); renderBracket(); renderLiveNow(); }
+    });
   }
 };
 
@@ -1034,7 +1067,16 @@ async function renderTables() {
   }
   if (token !== renderToken) return;
   const lu = el("lastUpd");
-  if (lu) lu.textContent = data.last_updated ? `Results updated ${timeAgo(data.last_updated)}` : "No results synced yet";
+  if (lu) {
+    lu.innerHTML = (data.last_updated ? `Results updated ${timeAgo(data.last_updated)}` : "No results synced yet")
+      + ' <button class="mini-link" id="refreshLeagueBtn" title="Refresh now">🔄</button>';
+    el("refreshLeagueBtn").onclick = async () => {
+      const ok = await maybeRefresh();
+      if (renderToken !== token) return;
+      toast(ok ? "Results updated" : "Already up to date");
+      renderTables(); renderBracket(); renderLiveNow();
+    };
+  }
   if (!data.combined || !data.combined.length) {
     el("tables").innerHTML = '<p class="empty">No table yet - generate fixtures and sync results first.</p>';
     return;
