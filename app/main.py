@@ -63,6 +63,18 @@ def _startup() -> None:
                 sync_gameweeks_only()
     except Exception as e:  # never block startup on a network hiccup
         print("startup gameweek sync skipped:", e)
+    # Separately from the above: teams/players are needed to resolve names and
+    # positions in the fixture-lineup view. Checked independently of Gameweek -
+    # that table can already be populated (e.g. via /refresh) while this one
+    # is still empty, which left production silently showing "Player 123" /
+    # "?" for everyone instead of real names.
+    try:
+        with Session(ENGINE) as s:
+            if not s.exec(select(Player).limit(1)).first():
+                from app.sync import run_sync
+                run_sync(with_stats=False)
+    except Exception as e:
+        print("startup reference sync skipped:", e)
 
 
 @app.get("/api/gameweeks")
