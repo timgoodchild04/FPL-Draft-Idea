@@ -269,6 +269,9 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .matchup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
 .squad-col h4 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; font-size: 15px; }
 .squad-col .lp-total { color: var(--accent-dark); font-size: 18px; font-weight: 700; }
+.live-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--danger); border: 1px solid var(--danger); border-radius: 20px; padding: 1px 6px;
+  vertical-align: middle; }
 .bench-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
   margin: 12px 0 4px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .lp { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--muted); }

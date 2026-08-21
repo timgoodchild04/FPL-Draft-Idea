@@ -713,14 +713,15 @@ function transfersHtml(transfers) {
     </div>`;
 }
 
-function squadColumnHtml(side) {
+function squadColumnHtml(side, finished) {
   if (!side) {
     return `<div class="squad-col"><p class="empty">Lineup isn't published for this gameweek yet.</p></div>`;
   }
   const groups = ["GK", "DEF", "MID", "FWD"];
   const byPos = (list) => groups.map((g) => list.filter((p) => p.position === g).map(playerRowHtml).join("")).join("");
+  const liveTag = finished ? "" : ' <span class="live-tag">live</span>';
   return `<div class="squad-col">
-      <h4>${esc(side.manager)} <span class="lp-total">${side.points != null ? side.points : "-"}</span></h4>
+      <h4>${esc(side.manager)} <span class="lp-total">${side.points != null ? side.points : "-"}</span>${liveTag}</h4>
       <div class="starters">${byPos(side.starters)}</div>
       <div class="bench-label">Bench</div>
       <div class="bench">${byPos(side.bench)}</div>
@@ -737,7 +738,7 @@ async function showMatchup(gw, home, away, homeName, awayName) {
     const data = await api(withSeason(`/api/custom/fixture-lineups?gameweek=${gw}&home=${home}&away=${away}`));
     const updated = `<div class="muted" style="margin:10px 0 -4px;font-size:12px">Live as of ${timeAgo(data.fetched_at)}</div>`;
     el("matchupBody").innerHTML = updated + `<div class="matchup-grid">
-        ${squadColumnHtml(data.home)}${squadColumnHtml(data.away)}
+        ${squadColumnHtml(data.home, data.finished)}${squadColumnHtml(data.away, data.finished)}
       </div>`;
   } catch (e) {
     el("matchupBody").innerHTML = errorHtml("Couldn't load this match-up - " + e.message);

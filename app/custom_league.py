@@ -277,6 +277,44 @@ def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[in
     return {el["id"]: (el["stats"]["minutes"], el["stats"]["total_points"]) for el in live.get("elements", [])}
 
 
+def live_points_for_gameweek(
+    session: Session, client: httpx.Client, entry_ids: list[int], gameweek: int,
+    live_stats: dict[int, tuple[int, int]],
+) -> dict[int, int]:
+    """Live provisional total per entry for one gameweek still in progress.
+
+    Same auto-sub rule as entry_lineup's live_total, but skips building the
+    full squad detail (names, transfers, ...) - the Fixtures list just needs
+    a number per entry, for whichever entries have published picks.
+    """
+    picks_by_entry: dict[int, list[dict]] = {}
+    needed_ids: set[int] = set()
+    for entry_id in entry_ids:
+        try:
+            raw = fpldraft_client.fetch_entry_picks(client, entry_id, gameweek)
+        except Exception:
+            continue
+        picks = raw.get("picks") or []
+        if not picks:
+            continue
+        picks_by_entry[entry_id] = picks
+        needed_ids.update(p["element"] for p in picks)
+
+    if not needed_ids:
+        return {}
+    positions = {p.id: p.position for p in session.exec(select(Player).where(Player.id.in_(needed_ids))).all()}
+
+    out: dict[int, int] = {}
+    for entry_id, picks in picks_by_entry.items():
+        ordered = sorted(picks, key=lambda p: p.get("position", 99))
+        sp = lambda p: SquadPlayer(p["element"], "", positions.get(p["element"], "?"), 0)  # noqa: E731
+        starters = [sp(p) for p in ordered if p.get("position", 99) <= 11]
+        bench = [sp(p) for p in ordered if p.get("position", 99) > 11]
+        xi, _ = apply_auto_subs(starters, bench, live_stats)
+        out[entry_id] = sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi)
+    return out
+
+
 def _entry_transfers(client: httpx.Client, entry_id: int, gameweek: int, this_gw_ids: set[int]) -> list[dict]:
     """Squad changes vs. the previous gameweek.
 
@@ -314,8 +352,11 @@ def entry_lineup(
     Once `finished` is True the squad/transfers detail is frozen: the first
     computation is saved to FixtureLineupSnapshot and every later call just
     replays it. The overall score is deliberately NOT part of that freeze -
-    the caller always fills it in from EntryPoints, so it stays live for as
-    long as this app keeps re-syncing that table, exactly like the League
+    while the gameweek is still in progress the caller uses this result's own
+    live_total (FPL Draft doesn't publish anything for an entry until the
+    gameweek is fully processed); once finished, the caller switches to
+    EntryPoints, so it stays live for as long as this app keeps re-syncing
+    that table, exactly like the League
     table does.
     """
     if finished and season_id is not None:
@@ -366,9 +407,8 @@ def entry_lineup(
 
     # Flag who's *effectively* playing (same auto-sub rule as our own scoring):
     # a starter who didn't play, replaced in bench order by a bench player who
-    # did, keeping a valid formation. Shown as an arrow on the two affected
-    # rows - the score itself is always the official total above, not a sum
-    # of this.
+    # did, keeping a valid formation. Also doubles as a live provisional score
+    # while the gameweek's still in progress - see live_total below.
     starters_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in starters]
     bench_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in bench]
     xi, _ = apply_auto_subs(starters_sp, bench_sp, live_stats)
@@ -382,11 +422,13 @@ def entry_lineup(
         "starters": starters,
         "bench": bench,
         "transfers": transfers,
-        # No "points" here on purpose - the caller fills that in from
-        # EntryPoints (the same row the League table reads), not from this.
-        # That keeps the squad/transfers detail freezable once a gameweek
-        # finishes while the score itself stays live, re-synced exactly like
-        # the table, for as long as this app keeps re-pulling it.
+        # Our own live estimate (sum of the effective XI's current points) -
+        # FPL Draft itself doesn't publish anything for an entry until the
+        # whole gameweek is fully processed, so this is what "as close to
+        # live as possible" means before that happens. The caller uses this
+        # only while the gameweek isn't finished; once it is, EntryPoints (the
+        # same row the League table reads) is the authoritative score instead.
+        "live_total": sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi),
     }
 
     if finished and season_id is not None:

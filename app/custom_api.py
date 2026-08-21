@@ -623,13 +623,40 @@ def fixtures(season_id: int | None = None) -> dict:
                 return None
             return gwmeta[gw].deadline_time if gw in gwmeta else None
 
+        # FPL Draft doesn't compute an entry's official total until its
+        # gameweek is fully processed (confirmed against the live API - it
+        # comes back empty mid-gameweek), so EntryPoints has nothing for a
+        # "current" gameweek yet either. For those, compute a live provisional
+        # total per entry the same way the fixture-lineup view does - "as
+        # close to live as possible" - for whichever entries have published
+        # picks; everything else (finished/upcoming) is untouched.
+        live_pts: dict[tuple[int, int], int] = {}
+        current_gws = [] if archived else [gw for gw in gwmeta if gw_status(gw) == "current"]
+        if current_gws:
+            entries_by_gw: dict[int, set[int]] = {gw: set() for gw in current_gws}
+            for f in rows:
+                if f.gameweek in entries_by_gw:
+                    entries_by_gw[f.gameweek] |= {f.home_entry, f.away_entry}
+            with httpx.Client() as client:
+                for gw, entry_ids in entries_by_gw.items():
+                    if not entry_ids:
+                        continue
+                    live_stats = custom_league.live_player_stats(client, gw)
+                    for entry_id, total in custom_league.live_points_for_gameweek(
+                        s, client, list(entry_ids), gw, live_stats
+                    ).items():
+                        live_pts[(entry_id, gw)] = total
+
         def gw_points(entry_id: int, gw: int) -> int | None:
             # A gameweek that isn't finished (or live) yet shouldn't surface a
             # score at all - even if EntryPoints has a row for it from a stale
             # sync against an older real-world calendar mapping of this same
             # gameweek id. Only "finished"/"current" (live) reveal a number.
-            if gw_status(gw) == "upcoming":
+            status = gw_status(gw)
+            if status == "upcoming":
                 return None
+            if status == "current" and (entry_id, gw) in live_pts:
+                return live_pts[(entry_id, gw)]
             return pts.get((entry_id, gw))
 
         weeks: dict[int, list] = {}
@@ -690,11 +717,14 @@ def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None =
             away_lineup = custom_league.entry_lineup(
                 s, client, away, gameweek, live_stats, season_id_for_snapshot, finished)
 
-        # Points always come from EntryPoints - the exact row the League table
-        # reads - never from the (possibly frozen) squad detail above, so the
-        # score here can't drift from the table even after it re-syncs later.
+        # Once a gameweek is finished, its score comes from EntryPoints - the
+        # exact row the League table reads - so it can never drift from the
+        # table even after a later re-sync. Until then, FPL Draft itself has
+        # nothing to offer for that entry/gameweek, so the live_total each
+        # lineup already computed (from real-time per-player stats) is the
+        # closest thing to a live score there is.
         points_by_entry: dict[int, int] = {}
-        if season is not None:
+        if finished and season is not None:
             points_by_entry = {
                 p.entry_id: p.points for p in s.exec(
                     select(EntryPoints).where(
@@ -708,16 +738,18 @@ def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None =
         def side(entry_id: int, lineup: dict | None) -> dict | None:
             if lineup is None:
                 return None
+            points = points_by_entry.get(entry_id) if finished else lineup.get("live_total")
             # "points" last and explicit: an older frozen snapshot may still
-            # carry its own stale "points" key (from before this lived in
-            # EntryPoints instead) - this must always win over that.
+            # carry its own stale "points"/"live_total" key from an earlier
+            # schema - this computed value must always win over that.
             return {
                 "entry_id": entry_id, "manager": names.get(entry_id, str(entry_id)),
-                **lineup, "points": points_by_entry.get(entry_id),
+                **lineup, "points": points,
             }
 
         return {
             "gameweek": gameweek,
+            "finished": finished,
             "home": side(home, home_lineup),
             "away": side(away, away_lineup),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
