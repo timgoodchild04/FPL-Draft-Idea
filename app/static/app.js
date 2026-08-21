@@ -1011,8 +1011,16 @@ async function renderLiveNow() {
   box.innerHTML = !live ? "" : `<div class="card" style="margin-bottom:18px;border-color:var(--accent)">
       <h3 style="margin-top:0">⚡ Live - Gameweek ${live.gameweek}
         <span class="muted" style="font-weight:400;font-size:12px">(provisional, not final)</span></h3>
-      ${live.matches.map(matchRowHtml).join("")}
+      ${live.matches.map((m) => matchRowHtml(m, live.gameweek, live.status)).join("")}
     </div>`;
+  if (live) {
+    box.querySelectorAll(".match.clickable").forEach((div) => {
+      div.onclick = () => showMatchup(
+        Number(div.dataset.gw), Number(div.dataset.home), Number(div.dataset.away),
+        div.dataset.homeName, div.dataset.awayName,
+      );
+    });
+  }
 }
 
 async function renderTables() {
