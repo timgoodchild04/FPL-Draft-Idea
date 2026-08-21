@@ -6,6 +6,7 @@ fixtures (win 3 / draw 1 / loss 0, tie-break = total season points).
 """
 from __future__ import annotations
 
+import json
 import random
 from collections import Counter
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from app import fpl_client, fpldraft_client, schedule
 from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry
 from app.models import Gameweek, Player, Team
-from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
+from app.schedule_models import EntryPoints, Fixture, FixtureLineupSnapshot, LeagueMeta, Rivalry
 from app.scoring import SquadPlayer, apply_auto_subs
 
 
@@ -278,7 +279,7 @@ def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[in
 
 def entry_lineup(
     session: Session, client: httpx.Client, entry_id: int, gameweek: int,
-    live_stats: dict[int, tuple[int, int]],
+    live_stats: dict[int, tuple[int, int]], season_id: int | None, finished: bool,
 ) -> dict | None:
     """One entry's squad for a gameweek, with live played-status and points.
 
@@ -288,7 +289,22 @@ def entry_lineup(
     gameweek's picks aren't published yet (before the first deadline, or a
     fetch error - a missing lineup shouldn't break the other side of the
     fixture).
+
+    Once `finished` is True the result is frozen: the first computation is
+    saved to FixtureLineupSnapshot and every later call just replays it,
+    rather than re-fetching (and risking a different answer) forever after.
     """
+    if finished and season_id is not None:
+        snap = session.exec(
+            select(FixtureLineupSnapshot).where(
+                FixtureLineupSnapshot.season_id == season_id,
+                FixtureLineupSnapshot.entry_id == entry_id,
+                FixtureLineupSnapshot.gameweek == gameweek,
+            )
+        ).first()
+        if snap:
+            return json.loads(snap.data)
+
     try:
         raw = fpldraft_client.fetch_entry_picks(client, entry_id, gameweek)
     except Exception:
@@ -329,7 +345,7 @@ def entry_lineup(
     for p in bench:
         p["subbed_in"] = p["player_id"] in final_ids
 
-    return {
+    result = {
         "starters": starters,
         "bench": bench,
         "auto_subs": subs,
@@ -337,6 +353,17 @@ def entry_lineup(
         # entry/gameweek - both ultimately come from FPL Draft's own history.
         "points": (raw.get("entry_history") or {}).get("points"),
     }
+
+    if finished and season_id is not None:
+        try:
+            session.add(FixtureLineupSnapshot(
+                season_id=season_id, entry_id=entry_id, gameweek=gameweek, data=json.dumps(result),
+            ))
+            session.commit()
+        except Exception:
+            session.rollback()  # another request already snapshotted this - fine, we still return it
+
+    return result
 
 
 # --- H2H computation -----------------------------------------------------
