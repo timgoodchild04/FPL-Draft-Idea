@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 import httpx
 from sqlmodel import Session, delete, select
 
-from app import fpldraft_client, schedule
+from app import fpl_client, fpldraft_client, schedule
 from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry
-from app.models import Gameweek
+from app.models import Gameweek, Player, Team
 from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
+from app.scoring import SquadPlayer, apply_auto_subs
 
 
 # Teams per division. Rosters can be saved part-filled (ids often arrive a few at
@@ -259,6 +260,83 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
     session.add(meta)
     session.commit()
     return {"teams": len(entries), "point_rows": rows, "failed": failed}
+
+
+def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[int, int]]:
+    """Live per-player (minutes, total_points) for a gameweek, straight from FPL.
+
+    Unlike our own PlayerGameweekStats table (only backfilled once a gameweek
+    is *finished* - see app.sync), this works mid-gameweek too, which the
+    fixture-lineup view needs to show a running score as a match happens.
+    """
+    try:
+        live = fpl_client.fetch_gameweek_live(client, gameweek)
+    except Exception:
+        return {}
+    return {el["id"]: (el["stats"]["minutes"], el["stats"]["total_points"]) for el in live.get("elements", [])}
+
+
+def entry_lineup(
+    session: Session, client: httpx.Client, entry_id: int, gameweek: int,
+    live_stats: dict[int, tuple[int, int]],
+) -> dict | None:
+    """One entry's squad for a gameweek, with live played-status and points.
+
+    Pulls the entry's actual picks from the official FPL Draft site (this app
+    doesn't store rosters for mirror-mode divisions). Draft mode has no
+    captain, so every player counts at face value. Returns None if that
+    gameweek's picks aren't published yet (before the first deadline, or a
+    fetch error - a missing lineup shouldn't break the other side of the
+    fixture).
+    """
+    try:
+        raw = fpldraft_client.fetch_entry_picks(client, entry_id, gameweek)
+    except Exception:
+        return None
+    picks = raw.get("picks") or []
+    if not picks:
+        return None
+
+    player_ids = [p["element"] for p in picks]
+    players = {p.id: p for p in session.exec(select(Player).where(Player.id.in_(player_ids))).all()}
+    teams = {t.id: t.short_name for t in session.exec(select(Team)).all()}
+
+    def build(pick: dict) -> dict:
+        pl = players.get(pick["element"])
+        minutes, points = live_stats.get(pick["element"], (0, 0))
+        return {
+            "player_id": pick["element"],
+            "name": pl.web_name if pl else f"Player {pick['element']}",
+            "position": pl.position if pl else "?",
+            "team": teams.get(pl.team_id, "") if pl else "",
+            "played": minutes > 0,
+            "points": points,
+        }
+
+    ordered = sorted(picks, key=lambda p: p.get("position", 99))
+    starters = [build(p) for p in ordered if p.get("position", 99) <= 11]
+    bench = [build(p) for p in ordered if p.get("position", 99) > 11]
+
+    # Flag who's *effectively* playing (same auto-sub rule as our own scoring),
+    # purely to annotate the squad list - the score shown is always the
+    # official entry_history total below, not a re-derived sum of this.
+    starters_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in starters]
+    bench_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in bench]
+    xi, subs = apply_auto_subs(starters_sp, bench_sp, live_stats)
+    final_ids = {p.player_id for p in xi}
+    for p in starters:
+        p["subbed_out"] = p["player_id"] not in final_ids
+    for p in bench:
+        p["subbed_in"] = p["player_id"] in final_ids
+
+    return {
+        "starters": starters,
+        "bench": bench,
+        "auto_subs": subs,
+        # The one number that should always match the Fixtures table for this
+        # entry/gameweek - both ultimately come from FPL Draft's own history.
+        "points": (raw.get("entry_history") or {}).get("points"),
+    }
 
 
 # --- H2H computation -----------------------------------------------------

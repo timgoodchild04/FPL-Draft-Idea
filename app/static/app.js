@@ -667,7 +667,7 @@ function mgrCell(m) {
 }
 
 // Shared by Fixtures' gameweek grid and League's "Live now" card.
-function matchRowHtml(m) {
+function matchRowHtml(m, gw) {
   const me = String(myEntryId || "");
   const homeMine = me && String(m.home_id) === me;
   const awayMine = me && String(m.away_id) === me;
@@ -677,10 +677,62 @@ function matchRowHtml(m) {
   const row = (name, pts, win, mine) =>
     `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
     `<span class="pt">${pts != null ? pts : ""}</span></div>`;
-  return `<div class="match${homeMine || awayMine ? " mine" : ""}">
+  return `<div class="match${homeMine || awayMine ? " mine" : ""}"
+      data-gw="${gw}" data-home="${m.home_id}" data-away="${m.away_id}"
+      data-home-name="${esc(m.home)}" data-away-name="${esc(m.away)}">
       ${row(m.home, m.home_points, homeWin, homeMine)}
       ${row(m.away, m.away_points, awayWin, awayMine)}
     </div>`;
+}
+
+// ============================ FIXTURE MATCH-UP MODAL ======================
+function closeMatchupModal() { el("matchupModal").style.display = "none"; }
+
+function initMatchupModal() {
+  el("matchupModalClose").onclick = closeMatchupModal;
+  el("matchupModal").addEventListener("click", (e) => { if (e.target.id === "matchupModal") closeMatchupModal(); });
+}
+
+function playerRowHtml(p) {
+  const sub = p.subbed_out ? ' <span class="sub-badge out">OUT</span>'
+    : p.subbed_in ? ' <span class="sub-badge in">IN</span>' : "";
+  return `<div class="lp${p.played ? " played" : ""}">
+      <span class="lp-pos">${esc(p.position)}</span>
+      <span class="lp-name">${esc(p.name)}${sub}</span>
+      <span class="lp-pts">${p.played ? p.points : "-"}</span>
+    </div>`;
+}
+
+function squadColumnHtml(side) {
+  if (!side) {
+    return `<div class="squad-col"><p class="empty">Lineup isn't published for this gameweek yet.</p></div>`;
+  }
+  const groups = ["GK", "DEF", "MID", "FWD"];
+  const byPos = (list) => groups.map((g) => list.filter((p) => p.position === g).map(playerRowHtml).join("")).join("");
+  return `<div class="squad-col">
+      <h4>${esc(side.manager)} <span class="lp-total">${side.points != null ? side.points : "-"}</span></h4>
+      <div class="starters">${byPos(side.starters)}</div>
+      <div class="bench-label">Bench</div>
+      <div class="bench">${byPos(side.bench)}</div>
+      ${side.auto_subs && side.auto_subs.length
+        ? `<p class="muted small">🔁 ${side.auto_subs.map(esc).join(", ")}</p>` : ""}
+    </div>`;
+}
+
+async function showMatchup(gw, home, away, homeName, awayName) {
+  const modal = el("matchupModal");
+  modal.style.display = "flex";
+  el("matchupTitle").textContent = `Gameweek ${gw} · ${homeName} vs ${awayName}`;
+  el("matchupBody").innerHTML = loadingHtml("Loading lineups…");
+  try {
+    const data = await api(withSeason(`/api/custom/fixture-lineups?gameweek=${gw}&home=${home}&away=${away}`));
+    const updated = `<div class="muted" style="margin:10px 0 -4px;font-size:12px">Live as of ${timeAgo(data.fetched_at)}</div>`;
+    el("matchupBody").innerHTML = updated + `<div class="matchup-grid">
+        ${squadColumnHtml(data.home)}${squadColumnHtml(data.away)}
+      </div>`;
+  } catch (e) {
+    el("matchupBody").innerHTML = errorHtml("Couldn't load this match-up - " + e.message);
+  }
 }
 
 async function renderFixtures() {
@@ -732,8 +784,15 @@ async function renderFixtures() {
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
       <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
-      w.matches.map(matchRowHtml).join("")
+      w.matches.map((m) => matchRowHtml(m, w.gameweek)).join("")
     }</div>`).join("")}</div>`;
+
+  app().querySelectorAll(".match").forEach((div) => {
+    div.onclick = () => showMatchup(
+      Number(div.dataset.gw), Number(div.dataset.home), Number(div.dataset.away),
+      div.dataset.homeName, div.dataset.awayName,
+    );
+  });
 
   const cur = data.gameweeks.find((w) => w.status === "current");
   if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
@@ -1172,6 +1231,7 @@ function initToTop() {
   initToTop();
   initThemeToggle();
   initSetupCog();
+  initMatchupModal();
   // Before anything renders: manager links and the viewer's saved team both key
   // off entry ids, which go stale every season rollover. Show the spinner first
   // so a cold start on Render doesn't sit on an empty page while this lands.
