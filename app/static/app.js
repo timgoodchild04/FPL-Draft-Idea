@@ -159,16 +159,61 @@ function setView(name) {
 document.querySelectorAll("#tabs button").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
 
-// While a live gameweek's on screen, keep its scores moving without the user
-// having to reload - a plain interval that stops itself the moment the
-// viewer navigates away (renderToken no longer matches).
+// While a gameweek's actually live, keep its scores moving without the user
+// having to reload. Stops itself the moment the viewer navigates away
+// (renderToken no longer matches), pauses entirely while the tab isn't
+// visible (no point burning DB/API calls on a background tab nobody's
+// looking at), and - since each tick decides for itself whether to keep
+// going - naturally winds down once nothing's live any more instead of
+// polling forever regardless of whether anything's actually happening.
 let liveTickerTimer = null;
-function startLiveTicker(token, tick, intervalMs = 60000) {
+let activeTicker = null;  // { token, tick, intervalMs } while one's wanted
+
+function armTicker() {
   if (liveTickerTimer) clearInterval(liveTickerTimer);
+  if (!activeTicker) return;
   liveTickerTimer = setInterval(() => {
-    if (renderToken !== token) { clearInterval(liveTickerTimer); liveTickerTimer = null; return; }
-    tick();
-  }, intervalMs);
+    if (!activeTicker || renderToken !== activeTicker.token) { stopLiveTicker(); return; }
+    activeTicker.tick();
+  }, activeTicker.intervalMs);
+}
+
+function startLiveTicker(token, tick, intervalMs = 60000) {
+  activeTicker = { token, tick, intervalMs };
+  if (document.visibilityState === "visible") armTicker();
+}
+
+function stopLiveTicker() {
+  if (liveTickerTimer) { clearInterval(liveTickerTimer); liveTickerTimer = null; }
+  activeTicker = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!activeTicker) return;
+  if (document.visibilityState === "hidden") {
+    if (liveTickerTimer) { clearInterval(liveTickerTimer); liveTickerTimer = null; }
+  } else if (renderToken === activeTicker.token) {
+    activeTicker.tick();  // catch up immediately on return, then resume ticking
+    armTicker();
+  } else {
+    stopLiveTicker();
+  }
+});
+
+// A gameweek counts as "live" for polling purposes for as long as it's
+// actually in progress, plus a trailing hour after - bonus points and other
+// late corrections can land a while after full time, so this gives a
+// realistic window to pick those up without polling indefinitely once a
+// gameweek's genuinely done and dusted.
+const LIVE_GRACE_MS = 60 * 60 * 1000;
+let lastSeenLiveAt = null;
+
+function shouldKeepPolling(gameweeks) {
+  if ((gameweeks || []).some((w) => w.status === "current")) {
+    lastSeenLiveAt = Date.now();
+    return true;
+  }
+  return lastSeenLiveAt != null && (Date.now() - lastSeenLiveAt) < LIVE_GRACE_MS;
 }
 
 // A past (archived) season is picked by id; the current one is always "no param".
@@ -655,16 +700,19 @@ views.setup = async function () {
 // ============================ FIXTURES ====================================
 views.fixtures = async function () {
   const token = renderToken;
-  await renderFixtures();
+  let data = await renderFixtures();
   if (token !== renderToken) return;
   if (!isArchivedSelected() && await maybeRefresh()) {
     if (token !== renderToken) return;
-    toast("Results updated"); renderFixtures();
+    toast("Results updated"); data = await renderFixtures();
   }
-  if (!isArchivedSelected()) {
+  if (token !== renderToken) return;
+  if (!isArchivedSelected() && shouldKeepPolling(data && data.gameweeks)) {
     startLiveTicker(token, async () => {
       await maybeRefresh().catch(() => {});
-      if (renderToken === token) renderFixtures(true);
+      if (renderToken !== token) return;
+      const fresh = await renderFixtures(true);
+      if (!shouldKeepPolling(fresh && fresh.gameweeks)) stopLiveTicker();
     });
   }
 };
@@ -784,16 +832,16 @@ async function renderFixtures(background) {
   let data;
   try { data = await api(withSeason("/api/custom/fixtures")); }
   catch (e) {
-    if (background) return;  // keep showing the last good render rather than an error over it
+    if (background) return null;  // keep showing the last good render rather than an error over it
     const msg = await friendlyErrorHtml("Couldn't load fixtures - " + e.message);
     if (token === renderToken) app().innerHTML = header + msg;
-    return;
+    return null;
   }
-  if (token !== renderToken) return;
+  if (token !== renderToken) return null;
   if (!data.gameweeks.length) {
-    if (background) return;
+    if (background) return data;
     app().innerHTML = header + '<p class="empty">No fixtures yet - generate them on the Setup tab.</p>';
-    return;
+    return data;
   }
   const fmt = (iso, withTime) => {
     if (!iso) return "";
@@ -839,6 +887,7 @@ async function renderFixtures(background) {
     const cur = data.gameweeks.find((w) => w.status === "current");
     if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
   }
+  return data;
 };
 
 // ============================ RULES =======================================
@@ -1017,16 +1066,22 @@ views.league = async function () {
     <div id="tables">${loadingHtml("Loading table…")}</div>
     <h3 style="margin-top:26px">Playoffs (GW37-38)</h3>
     <div id="bracket">${loadingHtml("Loading playoffs…")}</div>`;
-  await Promise.all([renderTables(), renderBracket(), renderLiveNow()]);
+  let [, , liveGws] = await Promise.all([renderTables(), renderBracket(), renderLiveNow()]);
   if (token !== renderToken) return;
   if (!archived && await maybeRefresh()) {
     if (token !== renderToken) return;
-    toast("Results updated"); renderTables(); renderBracket(); renderLiveNow();
+    toast("Results updated");
+    renderTables(); renderBracket();
+    liveGws = await renderLiveNow();
   }
-  if (!archived) {
+  if (token !== renderToken) return;
+  if (!archived && shouldKeepPolling(liveGws)) {
     startLiveTicker(token, async () => {
       await maybeRefresh().catch(() => {});
-      if (renderToken === token) { renderTables(); renderBracket(); renderLiveNow(); }
+      if (renderToken !== token) return;
+      renderTables(); renderBracket();
+      const fresh = await renderLiveNow();
+      if (!shouldKeepPolling(fresh)) stopLiveTicker();
     });
   }
 };
@@ -1034,12 +1089,12 @@ views.league = async function () {
 async function renderLiveNow() {
   const token = renderToken;
   const box = el("liveNow");
-  if (!box) return;
-  if (isArchivedSelected()) { box.innerHTML = ""; return; }
+  if (!box) return null;
+  if (isArchivedSelected()) { box.innerHTML = ""; return null; }
   let data;
   try { data = await api(withSeason("/api/custom/fixtures")); }
-  catch { if (token === renderToken) box.innerHTML = ""; return; }  // not critical - fail quiet
-  if (token !== renderToken) return;
+  catch { if (token === renderToken) box.innerHTML = ""; return null; }  // not critical - fail quiet
+  if (token !== renderToken) return null;
   const live = data.gameweeks.find((w) => w.status === "current");
   box.innerHTML = !live ? "" : `<div class="card" style="margin-bottom:18px;border-color:var(--accent)">
       <h3 style="margin-top:0">⚡ Live - Gameweek ${live.gameweek}
@@ -1054,6 +1109,7 @@ async function renderLiveNow() {
       );
     });
   }
+  return data.gameweeks;
 }
 
 async function renderTables() {
