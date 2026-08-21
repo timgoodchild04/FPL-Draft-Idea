@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 fpl_draft.db
+fpl_draft.db.*

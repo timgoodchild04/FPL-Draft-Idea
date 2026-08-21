@@ -277,9 +277,14 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   color: var(--muted); }
 .lp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lp-pts { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
-.sub-badge { font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px; vertical-align: middle; }
-.sub-badge.out { background: var(--danger); color: #fff; opacity: .8; }
-.sub-badge.in { background: var(--accent); color: #fff; }
+.sub-arrow { font-size: 11px; font-weight: 700; vertical-align: middle; }
+.sub-arrow.in { color: var(--emerald); }
+.sub-arrow.out { color: var(--danger); }
+.transfers { margin-top: 12px; }
+.transfer-chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 8px;
+  border-radius: 20px; margin: 2px 4px 2px 0; }
+.transfer-chip.in { background: var(--accent-soft); color: var(--accent-dark); }
+.transfer-chip.out { background: rgba(225, 29, 72, 0.12); color: var(--danger); }
 @media (max-width: 700px) {
   .matchup-grid { grid-template-columns: 1fr; gap: 20px; }
 }

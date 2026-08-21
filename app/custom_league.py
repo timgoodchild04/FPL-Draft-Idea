@@ -277,6 +277,27 @@ def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[in
     return {el["id"]: (el["stats"]["minutes"], el["stats"]["total_points"]) for el in live.get("elements", [])}
 
 
+def _entry_transfers(client: httpx.Client, entry_id: int, gameweek: int, this_gw_ids: set[int]) -> list[dict]:
+    """Squad changes vs. the previous gameweek.
+
+    Draft mode has no "free transfers" - the only way a squad changes between
+    gameweeks is a processed waiver or trade, so a plain diff of picks *is*
+    the transfer list. Nothing to compare gameweek 1 against.
+    """
+    if gameweek <= 1:
+        return []
+    try:
+        prev_raw = fpldraft_client.fetch_entry_picks(client, entry_id, gameweek - 1)
+    except Exception:
+        return []
+    prev_ids = {p["element"] for p in (prev_raw.get("picks") or [])}
+    if not prev_ids:
+        return []
+    ins = [{"player_id": pid, "direction": "in"} for pid in sorted(this_gw_ids - prev_ids)]
+    outs = [{"player_id": pid, "direction": "out"} for pid in sorted(prev_ids - this_gw_ids)]
+    return ins + outs
+
+
 def entry_lineup(
     session: Session, client: httpx.Client, entry_id: int, gameweek: int,
     live_stats: dict[int, tuple[int, int]], season_id: int | None, finished: bool,
@@ -313,7 +334,9 @@ def entry_lineup(
     if not picks:
         return None
 
-    player_ids = [p["element"] for p in picks]
+    player_ids = {p["element"] for p in picks}
+    transfers = _entry_transfers(client, entry_id, gameweek, player_ids)
+    player_ids |= {t["player_id"] for t in transfers}
     players = {p.id: p for p in session.exec(select(Player).where(Player.id.in_(player_ids))).all()}
     teams = {t.id: t.short_name for t in session.exec(select(Team)).all()}
 
@@ -329,16 +352,23 @@ def entry_lineup(
             "points": points,
         }
 
+    for t in transfers:
+        pl = players.get(t["player_id"])
+        t["name"] = pl.web_name if pl else f"Player {t['player_id']}"
+        t["position"] = pl.position if pl else "?"
+
     ordered = sorted(picks, key=lambda p: p.get("position", 99))
     starters = [build(p) for p in ordered if p.get("position", 99) <= 11]
     bench = [build(p) for p in ordered if p.get("position", 99) > 11]
 
-    # Flag who's *effectively* playing (same auto-sub rule as our own scoring),
-    # purely to annotate the squad list - the score shown is always the
-    # official entry_history total below, not a re-derived sum of this.
+    # Flag who's *effectively* playing (same auto-sub rule as our own scoring):
+    # a starter who didn't play, replaced in bench order by a bench player who
+    # did, keeping a valid formation. Shown as an arrow on the two affected
+    # rows - the score itself is always the official total above, not a sum
+    # of this.
     starters_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in starters]
     bench_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in bench]
-    xi, subs = apply_auto_subs(starters_sp, bench_sp, live_stats)
+    xi, _ = apply_auto_subs(starters_sp, bench_sp, live_stats)
     final_ids = {p.player_id for p in xi}
     for p in starters:
         p["subbed_out"] = p["player_id"] not in final_ids
@@ -348,7 +378,7 @@ def entry_lineup(
     result = {
         "starters": starters,
         "bench": bench,
-        "auto_subs": subs,
+        "transfers": transfers,
         # The one number that should always match the Fixtures table for this
         # entry/gameweek - both ultimately come from FPL Draft's own history.
         "points": (raw.get("entry_history") or {}).get("points"),
