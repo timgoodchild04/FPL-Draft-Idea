@@ -188,7 +188,8 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-.match { padding: 6px 2px; border-bottom: 1px dashed var(--line); }
+.match { padding: 6px 2px; border-bottom: 1px dashed var(--line); cursor: pointer; border-radius: 8px; }
+.match:hover { background: var(--accent-soft); }
 .match:last-child { border-bottom: none; }
 .match .mr { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: 14px; padding: 1px 0; }
 .match .mr .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -260,6 +261,26 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .modal-box {
   background: var(--card); border-radius: 16px; padding: 22px; width: 100%; max-width: 340px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+.modal-box.matchup-box { max-width: 640px; max-height: 85vh; overflow-y: auto; }
+
+/* fixture match-up modal */
+.matchup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
+.squad-col h4 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; font-size: 15px; }
+.squad-col .lp-total { color: var(--accent-dark); font-size: 18px; font-weight: 700; }
+.bench-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  margin: 12px 0 4px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.lp { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--muted); }
+.lp.played { color: var(--ink); }
+.lp-pos { flex: none; width: 30px; font-size: 10px; font-weight: 700; letter-spacing: .03em;
+  color: var(--muted); }
+.lp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-pts { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
+.sub-badge { font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px; vertical-align: middle; }
+.sub-badge.out { background: var(--danger); color: #fff; opacity: .8; }
+.sub-badge.in { background: var(--accent); color: #fff; }
+@media (max-width: 700px) {
+  .matchup-grid { grid-template-columns: 1fr; gap: 20px; }
 }
 
 /* --- mobile only: keep the nav from overflowing (desktop layout unchanged) --- */

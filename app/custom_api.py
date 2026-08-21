@@ -661,6 +661,38 @@ def fixtures(season_id: int | None = None) -> dict:
         }
 
 
+@current_router.get("/fixture-lineups")
+def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None = None) -> dict:
+    """Both sides of one fixture: squads, who's played, live points.
+
+    Best-effort - a side whose picks aren't published yet (or fails to fetch)
+    comes back null rather than failing the whole request.
+    """
+    with Session(ENGINE) as s:
+        season = _resolve_season(s, season_id)
+        names: dict[int, str] = {}
+        if season is not None:
+            a, b = custom_league.collect_divisions(s, season)
+            names = {e.entry_id: e.manager_name for e in a + b}
+
+        with httpx.Client() as client:
+            live_stats = custom_league.live_player_stats(client, gameweek)
+            home_lineup = custom_league.entry_lineup(s, client, home, gameweek, live_stats)
+            away_lineup = custom_league.entry_lineup(s, client, away, gameweek, live_stats)
+
+        def side(entry_id: int, lineup: dict | None) -> dict | None:
+            if lineup is None:
+                return None
+            return {"entry_id": entry_id, "manager": names.get(entry_id, str(entry_id)), **lineup}
+
+        return {
+            "gameweek": gameweek,
+            "home": side(home, home_lineup),
+            "away": side(away, away_lineup),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+
 @current_router.get("/table")
 def table(season_id: int | None = None) -> dict:
     with Session(ENGINE) as s:

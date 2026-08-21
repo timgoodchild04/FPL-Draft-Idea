@@ -34,6 +34,17 @@ def fetch_entry_public(client: httpx.Client, entry_id: int) -> dict:
     return _get(client, f"/entry/{entry_id}/public")
 
 
+def fetch_entry_picks(client: httpx.Client, entry_id: int, event: int) -> dict:
+    """An entry's picks (starting XI + bench) for one gameweek.
+
+    Before that gameweek's picks are published the site returns a bare string
+    ("No pick history") instead of an object - callers get {} in that case
+    rather than having to special-case it themselves.
+    """
+    data = _get(client, f"/entry/{entry_id}/event/{event}")
+    return data if isinstance(data, dict) else {}
+
+
 def parse_league_id(url_or_id: str) -> int:
     """Accept a raw id, or a draft URL like .../league/12345/standings."""
     s = str(url_or_id).strip()
