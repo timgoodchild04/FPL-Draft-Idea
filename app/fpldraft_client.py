@@ -6,11 +6,19 @@ are public (no auth) for reading league and entry data.
 from __future__ import annotations
 
 import re
+import time
 
 import httpx
 
 BASE = "https://draft.premierleague.com/api"
 HEADERS = {"User-Agent": "fpl-draft-league/0.1 (local private league tool)"}
+
+# Short-lived cache for picks: the fixture-lineup and live-score views can
+# each ask for the same entry/gameweek's picks within the same page load, and
+# multiple viewers loading the site around the same time shouldn't each
+# trigger their own round trip for the same entry.
+CACHE_TTL_SECONDS = 30
+_picks_cache: dict[tuple[int, int], tuple[float, dict]] = {}
 
 
 def _get(client: httpx.Client, path: str) -> dict:
@@ -41,8 +49,15 @@ def fetch_entry_picks(client: httpx.Client, entry_id: int, event: int) -> dict:
     ("No pick history") instead of an object - callers get {} in that case
     rather than having to special-case it themselves.
     """
+    key = (entry_id, event)
+    cached = _picks_cache.get(key)
+    now = time.monotonic()
+    if cached and now - cached[0] < CACHE_TTL_SECONDS:
+        return cached[1]
     data = _get(client, f"/entry/{entry_id}/event/{event}")
-    return data if isinstance(data, dict) else {}
+    result = data if isinstance(data, dict) else {}
+    _picks_cache[key] = (now, result)
+    return result
 
 
 def parse_league_id(url_or_id: str) -> int:

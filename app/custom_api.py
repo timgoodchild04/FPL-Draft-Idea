@@ -631,6 +631,11 @@ def fixtures(season_id: int | None = None) -> dict:
         # close to live as possible" - for whichever entries have published
         # picks; everything else (finished/upcoming) is untouched.
         live_pts: dict[tuple[int, int], int] = {}
+        # Whether a real match from a current gameweek is being played right
+        # now - a much tighter signal than "gameweek is current" (which spans
+        # the whole multi-day round), used by the frontend to decide whether
+        # its auto-refresh ticker should actually be ticking.
+        match_in_play = False
         current_gws = [] if archived else [gw for gw in gwmeta if gw_status(gw) == "current"]
         if current_gws:
             entries_by_gw: dict[int, set[int]] = {gw: set() for gw in current_gws}
@@ -638,6 +643,9 @@ def fixtures(season_id: int | None = None) -> dict:
                 if f.gameweek in entries_by_gw:
                     entries_by_gw[f.gameweek] |= {f.home_entry, f.away_entry}
             with httpx.Client() as client:
+                for gw in current_gws:
+                    if custom_league.any_match_in_play(client, gw):
+                        match_in_play = True
                 for gw, entry_ids in entries_by_gw.items():
                     if not entry_ids:
                         continue
@@ -681,6 +689,7 @@ def fixtures(season_id: int | None = None) -> dict:
         return {
             "generated_at": meta.fixtures_generated_at if meta else None,
             "last_updated": meta.points_synced_at if meta else None,
+            "match_in_play": match_in_play,
             "gameweeks": [{"gameweek": gw,
                            "deadline": gw_deadline(gw),
                            "status": gw_status(gw), "matches": m}
