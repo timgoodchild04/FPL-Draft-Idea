@@ -200,17 +200,18 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// A gameweek counts as "live" for polling purposes for as long as it's
-// actually in progress, plus a trailing hour after - bonus points and other
-// late corrections can land a while after full time, so this gives a
-// realistic window to pick those up without polling indefinitely once a
-// gameweek's genuinely done and dusted.
+// matchInPlay is the tight "a real match is being played right now" signal
+// from the API - much narrower than "gameweek is current", which spans the
+// whole multi-day round including the dead time between matches (e.g.
+// Friday night to Saturday lunchtime). Keep polling while a match is live,
+// plus a trailing hour after the *most recent* one - bonus points can land
+// a while after full time - then go quiet again until the next match starts.
+// This resets every time a match goes live, so a gameweek spread over
+// several days still only polls during (and just after) each match, not
+// for the whole multi-day span in between.
 const LIVE_GRACE_MS = 60 * 60 * 1000;
 let lastSeenLiveAt = null;
 
-// matchInPlay is the tight "a real match is being played right now" signal
-// from the API - much narrower than "gameweek is current", which spans the
-// whole multi-day round including the dead time between matches.
 function shouldKeepPolling(matchInPlay) {
   if (matchInPlay) {
     lastSeenLiveAt = Date.now();
