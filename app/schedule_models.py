@@ -51,3 +51,24 @@ class EntryPoints(SQLModel, table=True):
     entry_id: int = Field(index=True)
     gameweek: int = Field(index=True)
     points: int = 0
+
+
+class FixtureLineupSnapshot(SQLModel, table=True):
+    """A frozen fixture-lineup result (app.custom_league.entry_lineup's output,
+    as JSON) for one entry's finished gameweek.
+
+    Written the first time a finished gameweek's lineup is computed, then
+    always served from here after - so it can never drift later. A transfer
+    or waiver on the official site only ever affects *future* gameweeks, but
+    without this it'd still be re-fetched live and could, in principle, come
+    back different (a re-pick, a data correction upstream, etc).
+    """
+
+    __table_args__ = (
+        UniqueConstraint("season_id", "entry_id", "gameweek", name="uq_fixture_lineup_snapshot"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    season_id: int = Field(foreign_key="season.id", index=True)
+    entry_id: int = Field(index=True)
+    gameweek: int = Field(index=True)
+    data: str  # JSON-encoded {starters, bench, auto_subs, points}

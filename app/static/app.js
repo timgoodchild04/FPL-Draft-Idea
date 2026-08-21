@@ -667,19 +667,20 @@ function mgrCell(m) {
 }
 
 // Shared by Fixtures' gameweek grid and League's "Live now" card.
-function matchRowHtml(m, gw) {
+function matchRowHtml(m, gw, gwStatus) {
   const me = String(myEntryId || "");
   const homeMine = me && String(m.home_id) === me;
   const awayMine = me && String(m.away_id) === me;
   const played = m.home_points != null && m.away_points != null;
   const homeWin = played && m.home_points > m.away_points;
   const awayWin = played && m.away_points > m.home_points;
+  const clickable = gwStatus !== "upcoming";
   const row = (name, pts, win, mine) =>
     `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
     `<span class="pt">${pts != null ? pts : ""}</span></div>`;
-  return `<div class="match${homeMine || awayMine ? " mine" : ""}"
+  return `<div class="match${homeMine || awayMine ? " mine" : ""}${clickable ? " clickable" : ""}"
       data-gw="${gw}" data-home="${m.home_id}" data-away="${m.away_id}"
-      data-home-name="${esc(m.home)}" data-away-name="${esc(m.away)}">
+      data-home-name="${esc(m.home)}" data-away-name="${esc(m.away)}" data-clickable="${clickable}">
       ${row(m.home, m.home_points, homeWin, homeMine)}
       ${row(m.away, m.away_points, awayWin, awayMine)}
     </div>`;
@@ -784,10 +785,10 @@ async function renderFixtures() {
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
       <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
-      w.matches.map((m) => matchRowHtml(m, w.gameweek)).join("")
+      w.matches.map((m) => matchRowHtml(m, w.gameweek, w.status)).join("")
     }</div>`).join("")}</div>`;
 
-  app().querySelectorAll(".match").forEach((div) => {
+  app().querySelectorAll(".match.clickable").forEach((div) => {
     div.onclick = () => showMatchup(
       Number(div.dataset.gw), Number(div.dataset.home), Number(div.dataset.away),
       div.dataset.homeName, div.dataset.awayName,

@@ -675,10 +675,20 @@ def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None =
             a, b = custom_league.collect_divisions(s, season)
             names = {e.entry_id: e.manager_name for e in a + b}
 
+        # An archived season is a frozen historic record - same rule the
+        # fixtures list uses, so a rolled-over gameweek id's fresh "not
+        # finished" flag can't un-finish an old season's fixture here either.
+        archived = season is not None and season.archived_at is not None
+        gw = s.get(Gameweek, gameweek)
+        finished = archived or bool(gw and gw.finished)
+        season_id_for_snapshot = season.id if season is not None else None
+
         with httpx.Client() as client:
             live_stats = custom_league.live_player_stats(client, gameweek)
-            home_lineup = custom_league.entry_lineup(s, client, home, gameweek, live_stats)
-            away_lineup = custom_league.entry_lineup(s, client, away, gameweek, live_stats)
+            home_lineup = custom_league.entry_lineup(
+                s, client, home, gameweek, live_stats, season_id_for_snapshot, finished)
+            away_lineup = custom_league.entry_lineup(
+                s, client, away, gameweek, live_stats, season_id_for_snapshot, finished)
 
         def side(entry_id: int, lineup: dict | None) -> dict | None:
             if lineup is None:
