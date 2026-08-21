@@ -695,12 +695,21 @@ function initMatchupModal() {
 }
 
 function playerRowHtml(p) {
-  const sub = p.subbed_out ? ' <span class="sub-badge out">OUT</span>'
-    : p.subbed_in ? ' <span class="sub-badge in">IN</span>' : "";
+  const subArrow = p.subbed_out ? ' <span class="sub-arrow out">▼</span>'
+    : p.subbed_in ? ' <span class="sub-arrow in">▲</span>' : "";
   return `<div class="lp${p.played ? " played" : ""}">
       <span class="lp-pos">${esc(p.position)}</span>
-      <span class="lp-name">${esc(p.name)}${sub}</span>
+      <span class="lp-name">${esc(p.name)}${subArrow}</span>
       <span class="lp-pts">${p.played ? p.points : "-"}</span>
+    </div>`;
+}
+
+function transfersHtml(transfers) {
+  if (!transfers || !transfers.length) return "";
+  const chip = (t) => `<span class="transfer-chip ${t.direction}">${t.direction === "in" ? "▲" : "▼"} ${esc(t.name)}</span>`;
+  return `<div class="transfers">
+      <div class="bench-label">Transfers this gameweek</div>
+      ${transfers.map(chip).join(" ")}
     </div>`;
 }
 
@@ -715,8 +724,7 @@ function squadColumnHtml(side) {
       <div class="starters">${byPos(side.starters)}</div>
       <div class="bench-label">Bench</div>
       <div class="bench">${byPos(side.bench)}</div>
-      ${side.auto_subs && side.auto_subs.length
-        ? `<p class="muted small">🔁 ${side.auto_subs.map(esc).join(", ")}</p>` : ""}
+      ${transfersHtml(side.transfers)}
     </div>`;
 }
 
