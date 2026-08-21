@@ -690,10 +690,31 @@ def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None =
             away_lineup = custom_league.entry_lineup(
                 s, client, away, gameweek, live_stats, season_id_for_snapshot, finished)
 
+        # Points always come from EntryPoints - the exact row the League table
+        # reads - never from the (possibly frozen) squad detail above, so the
+        # score here can't drift from the table even after it re-syncs later.
+        points_by_entry: dict[int, int] = {}
+        if season is not None:
+            points_by_entry = {
+                p.entry_id: p.points for p in s.exec(
+                    select(EntryPoints).where(
+                        EntryPoints.season_id == season.id,
+                        EntryPoints.gameweek == gameweek,
+                        EntryPoints.entry_id.in_([home, away]),
+                    )
+                ).all()
+            }
+
         def side(entry_id: int, lineup: dict | None) -> dict | None:
             if lineup is None:
                 return None
-            return {"entry_id": entry_id, "manager": names.get(entry_id, str(entry_id)), **lineup}
+            # "points" last and explicit: an older frozen snapshot may still
+            # carry its own stale "points" key (from before this lived in
+            # EntryPoints instead) - this must always win over that.
+            return {
+                "entry_id": entry_id, "manager": names.get(entry_id, str(entry_id)),
+                **lineup, "points": points_by_entry.get(entry_id),
+            }
 
         return {
             "gameweek": gameweek,

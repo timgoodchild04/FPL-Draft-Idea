@@ -311,9 +311,12 @@ def entry_lineup(
     fetch error - a missing lineup shouldn't break the other side of the
     fixture).
 
-    Once `finished` is True the result is frozen: the first computation is
-    saved to FixtureLineupSnapshot and every later call just replays it,
-    rather than re-fetching (and risking a different answer) forever after.
+    Once `finished` is True the squad/transfers detail is frozen: the first
+    computation is saved to FixtureLineupSnapshot and every later call just
+    replays it. The overall score is deliberately NOT part of that freeze -
+    the caller always fills it in from EntryPoints, so it stays live for as
+    long as this app keeps re-syncing that table, exactly like the League
+    table does.
     """
     if finished and season_id is not None:
         snap = session.exec(
@@ -379,9 +382,11 @@ def entry_lineup(
         "starters": starters,
         "bench": bench,
         "transfers": transfers,
-        # The one number that should always match the Fixtures table for this
-        # entry/gameweek - both ultimately come from FPL Draft's own history.
-        "points": (raw.get("entry_history") or {}).get("points"),
+        # No "points" here on purpose - the caller fills that in from
+        # EntryPoints (the same row the League table reads), not from this.
+        # That keeps the squad/transfers detail freezable once a gameweek
+        # finishes while the score itself stays live, re-synced exactly like
+        # the table, for as long as this app keeps re-pulling it.
     }
 
     if finished and season_id is not None:
