@@ -277,6 +277,22 @@ def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[in
     return {el["id"]: (el["stats"]["minutes"], el["stats"]["total_points"]) for el in live.get("elements", [])}
 
 
+def any_match_in_play(client: httpx.Client, gameweek: int) -> bool:
+    """Whether a real Premier League match from this gameweek is being played
+    right now (kicked off, not yet finished).
+
+    A gameweek stays "current" for the whole multi-day round, so this is a
+    much tighter signal than gw_status - it's what decides whether the
+    frontend's auto-refresh ticker should actually be ticking, as opposed to
+    sitting idle between Friday night's match and Saturday afternoon's.
+    """
+    try:
+        fixtures = fpl_client.fetch_fixtures(client, gameweek)
+    except Exception:
+        return False
+    return any(f.get("started") and not f.get("finished_provisional") for f in fixtures)
+
+
 def live_points_for_gameweek(
     session: Session, client: httpx.Client, entry_ids: list[int], gameweek: int,
     live_stats: dict[int, tuple[int, int]],

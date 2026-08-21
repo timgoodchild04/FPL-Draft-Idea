@@ -208,8 +208,11 @@ document.addEventListener("visibilitychange", () => {
 const LIVE_GRACE_MS = 60 * 60 * 1000;
 let lastSeenLiveAt = null;
 
-function shouldKeepPolling(gameweeks) {
-  if ((gameweeks || []).some((w) => w.status === "current")) {
+// matchInPlay is the tight "a real match is being played right now" signal
+// from the API - much narrower than "gameweek is current", which spans the
+// whole multi-day round including the dead time between matches.
+function shouldKeepPolling(matchInPlay) {
+  if (matchInPlay) {
     lastSeenLiveAt = Date.now();
     return true;
   }
@@ -707,12 +710,12 @@ views.fixtures = async function () {
     toast("Results updated"); data = await renderFixtures();
   }
   if (token !== renderToken) return;
-  if (!isArchivedSelected() && shouldKeepPolling(data && data.gameweeks)) {
+  if (!isArchivedSelected() && shouldKeepPolling(data && data.match_in_play)) {
     startLiveTicker(token, async () => {
       await maybeRefresh().catch(() => {});
       if (renderToken !== token) return;
       const fresh = await renderFixtures(true);
-      if (!shouldKeepPolling(fresh && fresh.gameweeks)) stopLiveTicker();
+      if (!shouldKeepPolling(fresh && fresh.match_in_play)) stopLiveTicker();
     });
   }
 };
@@ -1066,22 +1069,22 @@ views.league = async function () {
     <div id="tables">${loadingHtml("Loading table…")}</div>
     <h3 style="margin-top:26px">Playoffs (GW37-38)</h3>
     <div id="bracket">${loadingHtml("Loading playoffs…")}</div>`;
-  let [, , liveGws] = await Promise.all([renderTables(), renderBracket(), renderLiveNow()]);
+  let [, , live] = await Promise.all([renderTables(), renderBracket(), renderLiveNow()]);
   if (token !== renderToken) return;
   if (!archived && await maybeRefresh()) {
     if (token !== renderToken) return;
     toast("Results updated");
     renderTables(); renderBracket();
-    liveGws = await renderLiveNow();
+    live = await renderLiveNow();
   }
   if (token !== renderToken) return;
-  if (!archived && shouldKeepPolling(liveGws)) {
+  if (!archived && shouldKeepPolling(live && live.matchInPlay)) {
     startLiveTicker(token, async () => {
       await maybeRefresh().catch(() => {});
       if (renderToken !== token) return;
       renderTables(); renderBracket();
       const fresh = await renderLiveNow();
-      if (!shouldKeepPolling(fresh)) stopLiveTicker();
+      if (!shouldKeepPolling(fresh && fresh.matchInPlay)) stopLiveTicker();
     });
   }
 };
@@ -1109,7 +1112,9 @@ async function renderLiveNow() {
       );
     });
   }
-  return data.gameweeks;
+  // The card itself stays for the whole gameweek (above); matchInPlay is
+  // only for the caller to decide whether the auto-refresh ticker should run.
+  return { matchInPlay: data.match_in_play };
 }
 
 async function renderTables() {
