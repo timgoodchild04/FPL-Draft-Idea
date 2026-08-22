@@ -1,33 +1,62 @@
 # FPL Draft League (private)
 
-A self-hosted Fantasy Premier League draft clone for a private mates' league,
-with a custom two-division structure and a mid-season split (points carry over,
-squads re-drafted).
+A companion site for a private FPL Draft mini-league. Drafting, transfers,
+weekly lineups and scoring all happen as normal on the official FPL Draft
+site - this app pulls each entry's real results and builds a custom
+two-division head-to-head season on top, since FPL Draft doesn't offer any
+of that itself.
 
-Scoring is **not** computed by us - we pull each player's actual per-gameweek
-points from the public FPL API, so a real match feed is never needed.
+## What it does
+
+- Two divisions of real FPL Draft managers, drafted as normal on the official site.
+- One ~36-game season generated up front and locked in (your division x3, the
+  other division x2, plus a few extra games), followed by a cross-division
+  playoff on the final two gameweeks.
+- A **League** table (head-to-head: win 3, draw 1, tie-broken on total points)
+  and a **Fixtures** grid, both built from each entry's actual FPL Draft results.
+- Click into any fixture once its gameweek has started to see both squads
+  side by side - who's played, live points, auto-subs (a starter who didn't
+  play, replaced by a bench player who did), and transfers made that
+  gameweek - all reconstructed from the official site's own data. Once a
+  gameweek finishes, that view is frozen for good: later transfers on the
+  real site can never rewrite what already happened.
+- Scores update automatically while a gameweek's live - checked roughly every
+  60 seconds, but only while a real match from that gameweek is actually
+  being played (not for the dead time between matches), and paused whenever
+  the tab isn't visible. Nothing is invented: while FPL Draft hasn't
+  finalised a gameweek's score yet, this app computes its own live-as-close-
+  as-possible estimate from real per-player stats; once FPL Draft locks the
+  official number in, that's what's shown instead.
+- **Hall of Fame**: trophy cabinet and all-time records across every season
+  this site has tracked.
+- Everything else lives behind an admin-only **Setup** page (⚙️ icon): create
+  a season, enter each division's FPL Draft team IDs, generate the schedule
+  (one-time, then locked), rename things, back up/restore, and force a sync.
 
 ## Stack
 
 - Python + FastAPI (web/API)
-- SQLite via SQLModel (storage, single file `fpl_draft.db`)
-- httpx (FPL API client)
+- SQLModel - SQLite locally, or Postgres (e.g. Neon) via `DATABASE_URL` in production
+- httpx, talking to both the official classic FPL API (player/team reference
+  data, live per-gameweek player stats) and the FPL Draft API (league
+  entries, results, picks)
 
 ## Setup
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install fastapi "uvicorn[standard]" sqlmodel httpx
+./.venv/bin/pip install -r requirements.txt
 ```
 
-## Sync FPL data
+## Sync FPL reference data
 
-Pulls teams, players, gameweeks, and per-gameweek points into `fpl_draft.db`:
+Pulls teams, players and gameweeks - needed to resolve names/positions in the
+fixture view - into the database. The app also does this itself on startup
+if the Player table is ever found empty, so this is mainly for local dev:
 
 ```bash
-./.venv/bin/python -m app.sync            # everything, incl. all finished gameweeks
-./.venv/bin/python -m app.sync --no-stats # reference data only (fast)
-./.venv/bin/python -m app.sync --max-gw 5 # per-gameweek stats up to GW5 only
+./.venv/bin/python -m app.sync            # everything, incl. all finished gameweeks' stats
+./.venv/bin/python -m app.sync --no-stats # reference data only (fast) - all this app actually needs
 ```
 
 ## Run the app
@@ -36,82 +65,21 @@ Pulls teams, players, gameweeks, and per-gameweek points into `fpl_draft.db`:
 ./.venv/bin/uvicorn app.main:app --reload
 ```
 
-Then open **http://127.0.0.1:8000/** for the web UI (each page has a help panel):
-- **Setup** - create a season and its divisions (one division = one real FPL Draft
-  mini-league); delete divisions here too
-- **Live Tables** - link each division to its real league via a league or team URL
-  and view the live head-to-head table (finished gameweeks only)
-- **Season Split** - explains promotion/relegation + carry-over (the combined
-  cross-division engine is the next feature)
-
-> Drafting, transfers and scoring happen on the official FPL Draft site - this app
-> mirrors that data and builds the custom two-division tables on top. In-app
-> drafting was removed in favour of this approach.
+Open **http://127.0.0.1:8000/** for the web UI:
+- **League** - the head-to-head table, playoff bracket, and a live card while a gameweek's in progress
+- **Fixtures** - the full season's schedule; click any started-or-finished fixture for the head-to-head detail
+- **Hall of Fame** - trophy cabinet and all-time records
+- **Rules** - how the format works
+- **Setup** (⚙️, admin-only) - create a season, enter each division's FPL Draft team IDs, generate the schedule, sync, rename the league/managers, start a new season, back up/restore
 
 Also available:
 - http://127.0.0.1:8000/health - row counts (proof data landed)
-- http://127.0.0.1:8000/docs - interactive API docs
+- http://127.0.0.1:8000/docs - interactive docs for the `/api/custom/*` endpoints that actually power the site
 
-## League + draft API
+## Deployment
 
-Under `/api` (see `/docs`): create a season, managers, and divisions; assign
-members (list order = draft seed); then run a snake draft.
-
-```
-POST /api/seasons                         {name, split_gameweek}
-POST /api/managers                        {name}
-POST /api/divisions                       {season_id, stage, tier, name}
-POST /api/divisions/{id}/members          {manager_ids: [...]}   # order = seed
-POST /api/divisions/{id}/draft/start
-GET  /api/divisions/{id}/draft            # live state: who's on the clock
-GET  /api/divisions/{id}/available        # undrafted players, best first
-POST /api/divisions/{id}/draft/pick       {player_id, manager_id?}
-POST /api/divisions/{id}/draft/autopick
-GET  /api/divisions/{id}/board            # picks in order
-GET  /api/divisions/{id}/rosters          # each manager's squad
-```
-
-Rules enforced by the engine: snake order, one owner per player per division,
-and legal 2/5/5/3 squads (15 players).
-
-## Scoring + standings
-
-```
-PUT  /api/divisions/{id}/managers/{mid}/lineup            {gameweek_id, starters[11], bench[]}
-GET  /api/divisions/{id}/managers/{mid}/lineup?gameweek_id=N
-GET  /api/divisions/{id}/managers/{mid}/gameweek/{gw}     # score + which auto-subs fired
-GET  /api/divisions/{id}/standings                        # cumulative table for the stage
-```
-
-Draft-mode scoring (no captain): a manager scores their starting XI's FPL points
-for the gameweek, with automatic substitutions - a starter who played 0 minutes
-is replaced, in bench order, by a bench player who played, keeping a valid
-formation (GK-for-GK, outfield-for-outfield). If no lineup is set for a gameweek,
-a sensible default best-XI is used. A division's standings sum over the gameweeks
-in its stage (stage 1 = up to `split_gameweek`, stage 2 = after).
-
-## Status
-
-**Milestone 1 (done):** project skeleton + FPL data sync.
-**Milestone 2 (done):** seasons, managers, two-division structure, snake draft engine + API.
-**Milestone 3 (done):** lineups, auto-subs, per-gameweek scoring, division standings.
-**Milestone 4 (done):** mid-season split (promotion/relegation + re-draft) and the combined carry-over season table.
-
-The full season loop now works: draft two divisions -> score stage 1 ->
-promote/relegate at the split -> re-draft stage 2 -> combined table.
-**Milestone 5 (done):** web UI (Setup / Draft / Standings / Season Split) served at `/`.
-
-Next candidates: waivers / free-agent transfers between gameweeks, a real-time
-(WebSocket) live draft room, and per-gameweek lineup editing in the UI.
-
-## Mid-season split
-
-```
-GET  /api/seasons/{id}/split/preview?n_swap=2   # who'd go up/down (no changes)
-POST /api/seasons/{id}/split/apply?n_swap=2     # create stage-2 divisions, advance season
-GET  /api/seasons/{id}/table                    # combined table, points carry over
-```
-
-Bottom `n_swap` of tier 1 swap with top `n_swap` of tier 2. Stage-2 divisions are
-seeded worst-first (by stage-1 points) and then drafted via the normal draft
-endpoints. The combined table sums each manager's stage-1 and stage-2 points.
+Configured for Render (see `render.yaml`) as a free web service, with
+`DATABASE_URL` pointed at a Postgres database (e.g. Neon's free tier) so data
+survives restarts and deploys. Without `DATABASE_URL` set, it falls back to a
+local SQLite file - fine for development, but that file won't persist across
+a Render deploy.
