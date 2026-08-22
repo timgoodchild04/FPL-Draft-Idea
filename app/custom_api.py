@@ -22,11 +22,10 @@ from sqlmodel import Session, delete, select
 
 from app import custom_league, fpldraft_client, setup_league
 from app.db import ENGINE
-from app.league_models import Division, DivisionMembership, DraftPick, RosterSlot, Season
-from app.lineup_models import Lineup
+from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry, MirrorLink, MirrorMatch
 from app.models import Gameweek
-from app.schedule_models import EntryPoints, Fixture, LeagueMeta, Rivalry
+from app.schedule_models import EntryPoints, Fixture, FixtureLineupSnapshot, LeagueMeta, Rivalry
 from app.settings_models import Setting
 
 LEAGUE_NAME_KEY = "league_name"
@@ -364,14 +363,14 @@ def _purge_season(s: Session, season: Season) -> None:
     div_ids = [d.id for d in
                s.exec(select(Division).where(Division.season_id == season.id)).all()]
     if div_ids:
-        for tbl in (MirrorEntry, MirrorLink, MirrorMatch,
-                    DivisionMembership, DraftPick, RosterSlot, Lineup):
+        for tbl in (MirrorEntry, MirrorLink, MirrorMatch):
             s.exec(delete(tbl).where(tbl.division_id.in_(div_ids)))
     s.exec(delete(Division).where(Division.season_id == season.id))
     s.exec(delete(Fixture).where(Fixture.season_id == season.id))
     s.exec(delete(EntryPoints).where(EntryPoints.season_id == season.id))
     s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
     s.exec(delete(LeagueMeta).where(LeagueMeta.season_id == season.id))
+    s.exec(delete(FixtureLineupSnapshot).where(FixtureLineupSnapshot.season_id == season.id))
     s.exec(delete(Season).where(Season.id == season.id))
 
 

@@ -40,7 +40,6 @@ def init_db() -> None:
     # Importing models registers them on SQLModel.metadata before create_all.
     from app import (  # noqa: F401
         league_models,
-        lineup_models,
         mirror_models,
         models,
         schedule_models,
