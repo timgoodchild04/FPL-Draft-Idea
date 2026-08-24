@@ -18,6 +18,10 @@ const liveEntryId = (id) => (managerIndex[id] && managerIndex[id].id) || id;
 // team name on record, so displayName() falls back to whatever name the
 // caller already had rather than showing a blank.
 let nameMode = localStorage.getItem("nameMode") || "player";
+
+// Fixtures-only preference: hide every match but the viewer's own. Meaningless
+// without a chosen team, so it's only ever shown/applied when myEntryId is set.
+let myFixturesOnly = localStorage.getItem("myFixturesOnly") === "1";
 function displayName(entryId, fallbackName) {
   const idx = managerIndex[entryId];
   if (nameMode === "team") return (idx && idx.team) || fallbackName;
@@ -892,17 +896,23 @@ async function renderFixtures(background) {
     ? `<div class="lockbar">🔒 Fixtures locked in on <b>${fmt(data.generated_at, true)}</b></div>` : "";
   const updated = `<div class="muted" style="margin:-4px 0 14px">Results updated ${timeAgo(data.last_updated)}
       <button class="mini-link" id="refreshFixturesBtn" title="Refresh now">🔄</button></div>`;
+  const me = String(myEntryId || "");
+  const mineOnly = myFixturesOnly && !!me;
   const legend = `<div class="legend">
       <span><span class="dot" style="background:var(--accent)"></span> Current gameweek</span>
       <span><span class="dot" style="background:var(--accent-soft)"></span> Upcoming</span>
       <span><span class="dot" style="background:var(--muted-dot)"></span> Finished</span>
+      ${me ? `<label class="mine-toggle"><input type="checkbox" id="myFixturesOnly" ${mineOnly ? "checked" : ""}> My fixtures only</label>` : ""}
     </div>`;
   const tagText = { finished: "Finished", current: "Live", upcoming: "Upcoming" };
+  const rowsFor = (matches) => mineOnly
+    ? matches.filter((m) => String(m.home_id) === me || String(m.away_id) === me)
+    : matches;
   app().innerHTML = header + lockbar + updated + legend + `<div class="gw-grid">${
     data.gameweeks.map((w) => `<div class="gw-card gw-${w.status}" id="gwc-${w.gameweek}">
       <h4>Gameweek ${w.gameweek} <span class="gw-tag ${w.status}">${tagText[w.status] || ""}</span></h4>
       ${w.deadline ? `<div class="gw-deadline">deadline ${fmt(w.deadline, false)}</div>` : ""}${
-      w.matches.map((m) => matchRowHtml(m, w.gameweek, w.status)).join("")
+      rowsFor(w.matches).map((m) => matchRowHtml(m, w.gameweek, w.status)).join("")
     }</div>`).join("")}</div>`;
 
   app().querySelectorAll(".match.clickable").forEach((div) => {
@@ -917,6 +927,12 @@ async function renderFixtures(background) {
     if (token !== renderToken) return;
     toast(ok ? "Results updated" : "Already up to date");
     renderFixtures(true);
+  };
+
+  if (el("myFixturesOnly")) el("myFixturesOnly").onchange = (e) => {
+    myFixturesOnly = e.target.checked;
+    localStorage.setItem("myFixturesOnly", myFixturesOnly ? "1" : "0");
+    renderFixtures(true);  // background: re-render without the loading flash or re-scroll
   };
 
   if (!background) {
