@@ -53,6 +53,31 @@ class EntryPoints(SQLModel, table=True):
     points: int = 0
 
 
+class ScoreMismatch(SQLModel, table=True):
+    """Flags a finished gameweek where our own picks-based computation didn't
+    match FPL Draft's own official recorded total for that entry.
+
+    Once a gameweek is finished its score should be fixed and unambiguous, so
+    a mismatch here means FPL Draft's own systems disagreed with themselves
+    (their public API vs their website returning different squads for the
+    same entry/gameweek) - not something this app can correct, only flag for
+    an admin to notice on Setup.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("season_id", "entry_id", "gameweek", name="uq_score_mismatch"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    season_id: int = Field(foreign_key="season.id", index=True)
+    entry_id: int = Field(index=True)
+    gameweek: int
+    manager_name: str
+    computed_points: int
+    official_points: int
+    detected_at: str  # ISO UTC timestamp
+    dismissed: bool = False
+
+
 class FixtureLineupSnapshot(SQLModel, table=True):
     """A frozen fixture-lineup result (app.custom_league.entry_lineup's output,
     as JSON) for one entry's finished gameweek.

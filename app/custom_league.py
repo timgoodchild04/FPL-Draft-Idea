@@ -19,7 +19,7 @@ from app import fpl_client, fpldraft_client, schedule
 from app.league_models import Division, Season
 from app.mirror_models import MirrorEntry
 from app.models import Gameweek, Player, Team
-from app.schedule_models import EntryPoints, Fixture, FixtureLineupSnapshot, LeagueMeta, Rivalry
+from app.schedule_models import EntryPoints, Fixture, FixtureLineupSnapshot, LeagueMeta, Rivalry, ScoreMismatch
 from app.scoring import SquadPlayer, apply_auto_subs
 
 
@@ -370,6 +370,47 @@ def live_points_for_gameweek(
         xi, _ = apply_auto_subs(starters, bench, live_stats, confirmed_no_show)
         out[entry_id] = sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi)
     return out
+
+
+def record_score_mismatches(session: Session, season: Season, client: httpx.Client, gameweek: int) -> None:
+    """Sanity-check a just-finished gameweek: recompute each entry's score
+    from its picks the same way the live views do, and compare against the
+    official total EntryPoints just synced from /entry/{id}/history.
+
+    A finished gameweek's score should be fixed and unambiguous, so any
+    mismatch here means FPL Draft's own systems disagreed with themselves
+    (their public API returning a different squad for an entry than their
+    own website shows) - nothing this app can fix, only flag on Setup so an
+    admin notices instead of silently trusting a number that might be wrong.
+    """
+    a, b = collect_divisions(session, season)
+    entries = a + b
+    official = {
+        p.entry_id: p.points for p in session.exec(
+            select(EntryPoints).where(EntryPoints.season_id == season.id, EntryPoints.gameweek == gameweek)
+        ).all()
+    }
+    if not official:
+        return
+    closed_teams = fixture_closed_teams(session, client, gameweek)
+    live_stats = live_player_stats(client, gameweek)
+    computed = live_points_for_gameweek(
+        session, client, [e.entry_id for e in entries], gameweek, live_stats, closed_teams)
+    existing = {
+        (m.entry_id, m.gameweek) for m in session.exec(
+            select(ScoreMismatch).where(ScoreMismatch.season_id == season.id, ScoreMismatch.gameweek == gameweek)
+        ).all()
+    }
+    for e in entries:
+        off = official.get(e.entry_id)
+        comp = computed.get(e.entry_id)
+        if off is None or comp is None or comp == off or (e.entry_id, gameweek) in existing:
+            continue
+        session.add(ScoreMismatch(
+            season_id=season.id, entry_id=e.entry_id, gameweek=gameweek, manager_name=e.manager_name,
+            computed_points=comp, official_points=off, detected_at=datetime.now(timezone.utc).isoformat(),
+        ))
+    session.commit()
 
 
 def _entry_transfers(client: httpx.Client, entry_id: int, gameweek: int, this_gw_ids: set[int]) -> list[dict]:

@@ -399,10 +399,11 @@ views.setup = async function () {
   if (token !== renderToken) return;
   if (!isAdmin) { renderLogin(); return; }
   const be = el("brandEdit"); if (be) be.style.display = "";  // reveal the rename pencil
-  let st, seasons;
+  let st, seasons, mismatches;
   try {
     st = await api("/api/custom/status");
     seasons = await api("/api/custom/seasons").catch(() => []);
+    mismatches = await api("/api/custom/score-mismatches").catch(() => []);
   } catch (e) {
     const msg = await friendlyErrorHtml("Couldn't load Setup - " + e.message);
     if (token === renderToken) app().innerHTML = msg;
@@ -448,7 +449,25 @@ views.setup = async function () {
       Division B ${divs[1] ? divs[1].teams : 0}/${size}. Blanks are fine - add the remaining
       ${missing} team ID${missing === 1 ? "" : "s"} whenever you get them.</p>`;
 
-  app().innerHTML = helpBox + `
+  // FPL Draft's own public API occasionally disagrees with its own website
+  // about a finished gameweek's squad for a specific entry - nothing this
+  // app can fix, so just flag it here rather than silently trusting a
+  // number that might not match what managers see on the official site.
+  const mismatchCard = (mismatches && mismatches.length) ? `<div class="card" style="margin-top:12px;border-color:var(--danger)">
+      <h3 style="margin-top:0">⚠️ Score mismatch${mismatches.length === 1 ? "" : "es"} detected</h3>
+      <p class="muted">FPL Draft's own public API returned a different squad than its website shows for
+        these entries, for a gameweek that should already be locked in. Not something we can fix on our
+        end - "official" below is whatever their API/history endpoint reports, which is what this site uses.</p>
+      <table><tbody>${mismatches.map((m) => `<tr>
+          <td>${esc(m.manager_name)}</td>
+          <td class="num">GW${m.gameweek}</td>
+          <td class="num">our calc: ${m.computed_points}</td>
+          <td class="num">official: ${m.official_points}</td>
+          <td class="num"><button class="btn small" data-dismiss-mismatch="${m.id}">Dismiss</button></td>
+        </tr>`).join("")}</tbody></table>
+    </div>` : "";
+
+  app().innerHTML = helpBox + mismatchCard + `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <h2 style="margin:0">Setup</h2>
       <div style="display:flex;gap:8px">
@@ -542,6 +561,13 @@ views.setup = async function () {
     clearAdminAuth();
     toast("Logged out"); refreshBadge(); views.setup();
   };
+  document.querySelectorAll("[data-dismiss-mismatch]").forEach((btn) => {
+    btn.onclick = async () => {
+      try { await api(`/api/custom/score-mismatches/${btn.dataset.dismissMismatch}/dismiss`, { method: "POST" }); }
+      catch (e) { return toast(e.message, true); }
+      toast("Dismissed"); views.setup();
+    };
+  });
   if (el("swapBtn")) el("swapBtn").onclick = async () => {
     const oldId = el("swapOld").value;
     const newId = el("swapNew").value.trim();
