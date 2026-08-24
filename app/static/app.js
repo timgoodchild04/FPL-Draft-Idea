@@ -830,7 +830,7 @@ function squadColumnHtml(side, finished) {
       <h4>${esc(displayName(side.entry_id, side.manager))} <span class="lp-total">${side.points != null ? side.points : "-"}</span>${liveTag}</h4>
       <div class="starters">${byPos(side.starters)}</div>
       <div class="bench-label">Bench</div>
-      <div class="bench">${byPos(side.bench)}</div>
+      <div class="bench">${side.bench.map(playerRowHtml).join("")}</div>
       ${transfersHtml(side.transfers)}
     </div>`;
 }
