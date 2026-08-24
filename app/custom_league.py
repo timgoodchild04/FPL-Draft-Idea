@@ -289,6 +289,33 @@ def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[in
     return {el["id"]: (el["stats"]["minutes"], el["stats"]["total_points"]) for el in live.get("elements", [])}
 
 
+def fixture_closed_teams(session: Session, client: httpx.Client, gameweek: int) -> set[int]:
+    """Team ids with no playing time left in this gameweek: every fixture
+    they have this gameweek has finished, or (a blank gameweek for them)
+    they have none at all.
+
+    Used to gate auto-subs - a starter with 0 minutes should only be treated
+    as confirmed not to be playing once we know their game is actually over,
+    never just because it hasn't kicked off yet. Returns an empty set (no
+    team confirmed) if the fixture list can't be fetched or comes back
+    empty, since that's "no information" rather than "everyone's done".
+    """
+    try:
+        fixtures = fpl_client.fetch_fixtures(client, gameweek)
+    except Exception:
+        return set()
+    if not fixtures:
+        return set()
+    all_team_ids = {t.id for t in session.exec(select(Team)).all()}
+    per_team: dict[int, list[bool]] = {tid: [] for tid in all_team_ids}
+    for f in fixtures:
+        done = bool(f.get("finished_provisional")) or bool(f.get("finished"))
+        for tid in (f.get("team_h"), f.get("team_a")):
+            if tid in per_team:
+                per_team[tid].append(done)
+    return {tid for tid, flags in per_team.items() if all(flags)}
+
+
 def any_match_in_play(client: httpx.Client, gameweek: int) -> bool:
     """Whether a real Premier League match from this gameweek is being played
     right now (kicked off, not yet finished).
@@ -307,7 +334,7 @@ def any_match_in_play(client: httpx.Client, gameweek: int) -> bool:
 
 def live_points_for_gameweek(
     session: Session, client: httpx.Client, entry_ids: list[int], gameweek: int,
-    live_stats: dict[int, tuple[int, int]],
+    live_stats: dict[int, tuple[int, int]], closed_teams: set[int],
 ) -> dict[int, int]:
     """Live provisional total per entry for one gameweek still in progress.
 
@@ -330,15 +357,17 @@ def live_points_for_gameweek(
 
     if not needed_ids:
         return {}
-    positions = {p.id: p.position for p in session.exec(select(Player).where(Player.id.in_(needed_ids))).all()}
+    players_by_id = {p.id: p for p in session.exec(select(Player).where(Player.id.in_(needed_ids))).all()}
+    confirmed_no_show = {pid for pid, pl in players_by_id.items() if pl.team_id in closed_teams}
 
     out: dict[int, int] = {}
     for entry_id, picks in picks_by_entry.items():
         ordered = sorted(picks, key=lambda p: p.get("position", 99))
-        sp = lambda p: SquadPlayer(p["element"], "", positions.get(p["element"], "?"), 0)  # noqa: E731
+        pos = lambda pid: players_by_id[pid].position if pid in players_by_id else "?"  # noqa: E731
+        sp = lambda p: SquadPlayer(p["element"], "", pos(p["element"]), 0)  # noqa: E731
         starters = [sp(p) for p in ordered if p.get("position", 99) <= 11]
         bench = [sp(p) for p in ordered if p.get("position", 99) > 11]
-        xi, _ = apply_auto_subs(starters, bench, live_stats)
+        xi, _ = apply_auto_subs(starters, bench, live_stats, confirmed_no_show)
         out[entry_id] = sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi)
     return out
 
@@ -367,6 +396,7 @@ def _entry_transfers(client: httpx.Client, entry_id: int, gameweek: int, this_gw
 def entry_lineup(
     session: Session, client: httpx.Client, entry_id: int, gameweek: int,
     live_stats: dict[int, tuple[int, int]], season_id: int | None, finished: bool,
+    closed_teams: set[int] = frozenset(),
 ) -> dict | None:
     """One entry's squad for a gameweek, with live played-status and points.
 
@@ -436,10 +466,14 @@ def entry_lineup(
     # Flag who's *effectively* playing (same auto-sub rule as our own scoring):
     # a starter who didn't play, replaced in bench order by a bench player who
     # did, keeping a valid formation. Also doubles as a live provisional score
-    # while the gameweek's still in progress - see live_total below.
+    # while the gameweek's still in progress - see live_total below. A starter
+    # only counts as "didn't play" once their own fixture has actually
+    # finished (or they have none this gameweek) - not just because it hasn't
+    # kicked off yet.
+    confirmed_no_show = {pid for pid, pl in players.items() if pl.team_id in closed_teams}
     starters_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in starters]
     bench_sp = [SquadPlayer(p["player_id"], p["name"], p["position"], 0) for p in bench]
-    xi, _ = apply_auto_subs(starters_sp, bench_sp, live_stats)
+    xi, _ = apply_auto_subs(starters_sp, bench_sp, live_stats, confirmed_no_show)
     final_ids = {p.player_id for p in xi}
     for p in starters:
         p["subbed_out"] = p["player_id"] not in final_ids

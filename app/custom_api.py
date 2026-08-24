@@ -662,8 +662,9 @@ def fixtures(season_id: int | None = None) -> dict:
                     if not entry_ids:
                         continue
                     live_stats = custom_league.live_player_stats(client, gw)
+                    closed_teams = custom_league.fixture_closed_teams(s, client, gw)
                     for entry_id, total in custom_league.live_points_for_gameweek(
-                        s, client, list(entry_ids), gw, live_stats
+                        s, client, list(entry_ids), gw, live_stats, closed_teams
                     ).items():
                         live_pts[(entry_id, gw)] = total
 
@@ -733,10 +734,11 @@ def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None =
 
         with httpx.Client() as client:
             live_stats = custom_league.live_player_stats(client, gameweek)
+            closed_teams = custom_league.fixture_closed_teams(s, client, gameweek)
             home_lineup = custom_league.entry_lineup(
-                s, client, home, gameweek, live_stats, season_id_for_snapshot, finished)
+                s, client, home, gameweek, live_stats, season_id_for_snapshot, finished, closed_teams)
             away_lineup = custom_league.entry_lineup(
-                s, client, away, gameweek, live_stats, season_id_for_snapshot, finished)
+                s, client, away, gameweek, live_stats, season_id_for_snapshot, finished, closed_teams)
 
         # Once a gameweek is finished, its score comes from EntryPoints - the
         # exact row the League table reads - so it can never drift from the

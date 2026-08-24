@@ -32,15 +32,25 @@ def apply_auto_subs(
     starters: list[SquadPlayer],
     bench: list[SquadPlayer],
     stats: dict[int, tuple[int, int]],
+    confirmed_no_show: set[int] = frozenset(),
 ) -> tuple[list[SquadPlayer], list[str]]:
     """Pure auto-sub logic. Returns (final XI, human-readable sub descriptions).
 
     stats maps player_id -> (minutes, points); missing => (0, 0). A bench player
-    who played replaces the first non-playing starter whose swap keeps a valid
-    formation (this naturally enforces GK-for-GK and outfield-for-outfield).
+    who played replaces the first starter who's *confirmed* not to be playing -
+    zero minutes so far AND in confirmed_no_show (their fixture has finished,
+    or they have none this gameweek) - keeping a valid formation (this
+    naturally enforces GK-for-GK and outfield-for-outfield). Zero minutes on
+    its own isn't enough: a starter whose match simply hasn't kicked off yet
+    must never be treated as a non-starter. Pass an empty confirmed_no_show
+    (the default) to disable auto-subs entirely, e.g. when fixture data isn't
+    available to confirm anything.
     """
     def played(p: SquadPlayer) -> bool:
         return stats.get(p.player_id, (0, 0))[0] > 0
+
+    def out_for_good(p: SquadPlayer) -> bool:
+        return not played(p) and p.player_id in confirmed_no_show
 
     xi = list(starters)
     subs: list[str] = []
@@ -48,7 +58,7 @@ def apply_auto_subs(
         if not played(bp):
             continue
         for i, sp in enumerate(xi):
-            if played(sp):
+            if not out_for_good(sp):
                 continue
             candidate = [q.position for q in xi[:i]] + [bp.position] + [q.position for q in xi[i + 1:]]
             if valid_formation(candidate):
