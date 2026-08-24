@@ -743,7 +743,7 @@ views.fixtures = async function () {
   if (token !== renderToken) return;
   if (!isArchivedSelected() && await maybeRefresh()) {
     if (token !== renderToken) return;
-    toast("Results updated"); data = await renderFixtures();
+    data = await renderFixtures(true);  // background: no loading flash, no re-scroll
   }
   if (token !== renderToken) return;
   if (!isArchivedSelected() && shouldKeepPolling(data && data.match_in_play)) {
@@ -1122,7 +1122,6 @@ views.league = async function () {
   if (token !== renderToken) return;
   if (!archived && await maybeRefresh()) {
     if (token !== renderToken) return;
-    toast("Results updated");
     renderTables(); renderBracket();
     live = await renderLiveNow();
   }
