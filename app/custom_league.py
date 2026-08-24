@@ -253,6 +253,18 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
                 session.add(EntryPoints(season_id=season.id, entry_id=e.entry_id,
                                         gameweek=ev["event"], points=ev["points"]))
                 rows += 1
+            # Draft team names (unlike real names) can be changed anytime, so
+            # keep the current season's on record fresh here rather than only
+            # capturing it once at Setup - this runs every points sync, which
+            # is already the site's regular "check for changes" heartbeat.
+            try:
+                pub = fpldraft_client.fetch_entry_public(client, e.entry_id)
+                team = (pub.get("entry") or pub).get("name")
+                if team and team != e.team_name:
+                    e.team_name = team
+                    session.add(e)
+            except Exception:
+                pass
     finally:
         if own:
             client.close()
@@ -651,6 +663,7 @@ class ManagerIdentity:
     name: str                 # most recent spelling of their name
     entry_ids: list[int]      # every entry id they've used, first appearance first
     current_entry_id: int     # the newest - the only one FPL Draft still serves
+    team: str = ""            # most recent draft team name (may be blank for older entries)
 
 
 def manager_identities(session: Session) -> dict[str, ManagerIdentity]:
@@ -679,12 +692,14 @@ def manager_identities(session: Session) -> dict[str, ManagerIdentity]:
         key = _identity_key(entry.manager_name) or f"entry:{entry.entry_id}"
         ident = out.get(key)
         if ident is None:
-            out[key] = ManagerIdentity(key, entry.manager_name, [entry.entry_id], entry.entry_id)
+            out[key] = ManagerIdentity(key, entry.manager_name, [entry.entry_id], entry.entry_id,
+                                        entry.team_name)
             continue
         if entry.entry_id not in ident.entry_ids:
             ident.entry_ids.append(entry.entry_id)
         ident.name = entry.manager_name or ident.name
         ident.current_entry_id = entry.entry_id
+        ident.team = entry.team_name or ident.team
     return out
 
 
@@ -862,6 +877,7 @@ def manager_profile(session: Session, entry_id: int) -> dict | None:
             career["wins" if result == "W" else "losses" if result == "L" else "draws"] += 1
             career["points_for"] += own
             log.append({"gameweek": f.gameweek, "opponent": names.get(opp, f"Entry {opp}"),
+                       "opponent_id": opp,
                        "own_points": own, "opp_points": other, "result": result})
         if log:
             career["seasons_played"] += 1

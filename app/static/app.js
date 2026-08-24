@@ -13,6 +13,17 @@ let myEntryId = localStorage.getItem("myEntryId") || "";  // viewer's chosen tea
 let managerIndex = {};
 const liveEntryId = (id) => (managerIndex[id] && managerIndex[id].id) || id;
 
+// "player" (default) shows each manager's real name; "team" shows their FPL
+// Draft team name instead. Older entries the site never re-saved may have no
+// team name on record, so displayName() falls back to whatever name the
+// caller already had rather than showing a blank.
+let nameMode = localStorage.getItem("nameMode") || "player";
+function displayName(entryId, fallbackName) {
+  const idx = managerIndex[entryId];
+  if (nameMode === "team") return (idx && idx.team) || fallbackName;
+  return (idx && idx.name) || fallbackName;
+}
+
 async function loadManagerIndex() {
   try {
     const d = await api("/api/custom/managers");
@@ -256,7 +267,7 @@ async function populateMePicker() {
     if (st.divisions) players = st.divisions.flatMap((d) => d.entries || []);
   } catch { /* leave empty */ }
   sel.innerHTML = '<option value="">Pick your team…</option>' +
-    players.map((p) => `<option value="${p.entry_id}">${esc(p.name)}</option>`).join("");
+    players.map((p) => `<option value="${p.entry_id}">${esc(displayName(p.entry_id, p.name))}</option>`).join("");
   if (myEntryId) sel.value = myEntryId;
   sel.onchange = () => {
     myEntryId = sel.value;
@@ -277,6 +288,26 @@ function initThemeToggle() {
     document.documentElement.setAttribute("data-theme", next);
     localStorage.setItem("theme", next);
     sync();
+  };
+}
+
+function initNameToggle() {
+  const btn = el("nameToggle");
+  if (!btn) return;
+  const sync = () => {
+    btn.textContent = nameMode === "team" ? "🏷️" : "👤";
+    btn.title = nameMode === "team" ? "Showing draft team names - click for player names"
+                                     : "Showing player names - click for draft team names";
+  };
+  sync();
+  btn.onclick = () => {
+    nameMode = nameMode === "team" ? "player" : "team";
+    localStorage.setItem("nameMode", nameMode);
+    sync();
+    populateMePicker();
+    const active = document.querySelector("#tabs button.active");
+    if (active) setView(active.dataset.view);
+    else if (managerProfileEntryId != null) renderManagerProfile();
   };
 }
 
@@ -728,7 +759,7 @@ views.fixtures = async function () {
 // an id that 404s on their site.
 function mgrLink(m) {
   return `<a class="mgr-link" href="https://draft.premierleague.com/entry/${liveEntryId(m.entry_id)}/history" `
-    + `target="_blank" rel="noopener noreferrer">${esc(m.name)}</a>`;
+    + `target="_blank" rel="noopener noreferrer">${esc(displayName(m.entry_id, m.name))}</a>`;
 }
 // Same, plus a small icon into this site's own manager profile page.
 function mgrCell(m) {
@@ -748,11 +779,12 @@ function matchRowHtml(m, gw, gwStatus) {
   const row = (name, pts, win, mine) =>
     `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
     `<span class="pt">${pts != null ? pts : ""}</span></div>`;
+  const homeName = displayName(m.home_id, m.home), awayName = displayName(m.away_id, m.away);
   return `<div class="match${homeMine || awayMine ? " mine" : ""}${clickable ? " clickable" : ""}"
       data-gw="${gw}" data-home="${m.home_id}" data-away="${m.away_id}"
-      data-home-name="${esc(m.home)}" data-away-name="${esc(m.away)}" data-clickable="${clickable}">
-      ${row(m.home, m.home_points, homeWin, homeMine)}
-      ${row(m.away, m.away_points, awayWin, awayMine)}
+      data-home-name="${esc(homeName)}" data-away-name="${esc(awayName)}" data-clickable="${clickable}">
+      ${row(homeName, m.home_points, homeWin, homeMine)}
+      ${row(awayName, m.away_points, awayWin, awayMine)}
     </div>`;
 }
 
@@ -791,7 +823,7 @@ function squadColumnHtml(side, finished) {
   const byPos = (list) => groups.map((g) => list.filter((p) => p.position === g).map(playerRowHtml).join("")).join("");
   const liveTag = finished ? "" : ' <span class="live-tag">live</span>';
   return `<div class="squad-col">
-      <h4>${esc(side.manager)} <span class="lp-total">${side.points != null ? side.points : "-"}</span>${liveTag}</h4>
+      <h4>${esc(displayName(side.entry_id, side.manager))} <span class="lp-total">${side.points != null ? side.points : "-"}</span>${liveTag}</h4>
       <div class="starters">${byPos(side.starters)}</div>
       <div class="bench-label">Bench</div>
       <div class="bench">${byPos(side.bench)}</div>
@@ -1187,7 +1219,7 @@ async function renderBracket() {
     return;
   }
   const line = (team, pts, isWin, seedTxt) => team
-    ? `<div class="competitor ${isWin ? "win" : ""}"><span><span class="seed">${seedTxt || ""}</span>${esc(team.manager)}</span><span>${pts ?? ""}</span></div>`
+    ? `<div class="competitor ${isWin ? "win" : ""}"><span><span class="seed">${seedTxt || ""}</span>${esc(displayName(team.entry_id, team.manager))}</span><span>${pts ?? ""}</span></div>`
     : `<div class="competitor pending">TBD</div>`;
 
   const semiHtml = (sf) => {
@@ -1209,7 +1241,7 @@ async function renderBracket() {
     </div></div>`;
 
   const champHtml = po.champion
-    ? `<div class="champ-box">🏆 Champion<br>${esc(po.champion.manager)}</div>`
+    ? `<div class="champ-box">🏆 Champion<br>${esc(displayName(po.champion.entry_id, po.champion.manager))}</div>`
     : `<div class="champ-pending">🏆<br>Champion<br>TBD</div>`;
 
   el("bracket").innerHTML = `<div class="bracket">
@@ -1311,7 +1343,7 @@ async function renderManagerProfile() {
   const season = profile.season;
   app().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <h2 style="margin:0">${esc(profile.name)}</h2>
+      <h2 style="margin:0">${esc(displayName(profile.entry_id, profile.name))}</h2>
       <button class="btn small" id="profileBack">← Back</button>
     </div>
     <div class="rules" style="margin-top:14px">
@@ -1328,7 +1360,7 @@ async function renderManagerProfile() {
       <table><thead><tr><th class="num">GW</th><th>Opponent</th>
           <th class="num">For</th><th class="num">Against</th><th>Result</th></tr></thead>
         <tbody>${season.log.map((g) => `<tr>
-            <td class="num">${g.gameweek}</td><td>${esc(g.opponent)}</td>
+            <td class="num">${g.gameweek}</td><td>${esc(displayName(g.opponent_id, g.opponent))}</td>
             <td class="num">${g.own_points}</td><td class="num">${g.opp_points}</td>
             <td>${formBadge(g)}</td>
           </tr>`).join("")}</tbody></table>`}
@@ -1352,6 +1384,7 @@ function initToTop() {
   initBrandEdit();
   initToTop();
   initThemeToggle();
+  initNameToggle();
   initSetupCog();
   initMatchupModal();
   // Before anything renders: manager links and the viewer's saved team both key

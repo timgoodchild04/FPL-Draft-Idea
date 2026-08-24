@@ -188,6 +188,13 @@ def _entry_name(pub: dict, entry_id: int) -> str:
     return nm or e.get("name") or f"Team {entry_id}"
 
 
+def _team_name(pub: dict, entry_id: int) -> str:
+    """The manager's own draft team name (FPL Draft's `entry.name`), as distinct
+    from their real name - shown when a viewer toggles to team names."""
+    e = pub.get("entry") or pub
+    return e.get("name") or f"Team {entry_id}"
+
+
 @current_router.get("/status")
 def status(season_id: int | None = None) -> dict:
     with Session(ENGINE) as s:
@@ -287,12 +294,15 @@ def swap_team(body: SwapTeamIn, _admin: bool = Depends(require_admin)) -> dict:
             raise HTTPException(400, f"Team {new} is already in this season.")
         with httpx.Client() as client:
             try:
-                name = _entry_name(fpldraft_client.fetch_entry_public(client, new), new)
+                pub = fpldraft_client.fetch_entry_public(client, new)
+                name = _entry_name(pub, new)
+                team = _team_name(pub, new)
             except Exception:
                 raise HTTPException(400, f"Team id {new} isn't a valid FPL Draft team.")
         entry.entry_id = new
         entry.league_entry_id = new
         entry.manager_name = name
+        entry.team_name = team
         s.add(entry)
         for f in s.exec(select(Fixture).where(Fixture.season_id == season.id)).all():
             changed = False
@@ -427,11 +437,14 @@ def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
 
     # Validate + resolve names up front. A bad id aborts the whole save.
     names: dict[int, str] = {}
+    team_names: dict[int, str] = {}
     bad: list[int] = []
     with httpx.Client() as client:
         for eid in ids:
             try:
-                names[eid] = _entry_name(fpldraft_client.fetch_entry_public(client, eid), eid)
+                pub = fpldraft_client.fetch_entry_public(client, eid)
+                names[eid] = _entry_name(pub, eid)
+                team_names[eid] = _team_name(pub, eid)
             except Exception:
                 bad.append(eid)
     if bad:
@@ -448,7 +461,7 @@ def set_teams(body: TeamsIn, _admin: bool = Depends(require_admin)) -> dict:
             s.exec(delete(MirrorLink).where(MirrorLink.division_id == div.id))
             for eid in lst:
                 s.add(MirrorEntry(division_id=div.id, league_entry_id=eid,
-                                  entry_id=eid, manager_name=names[eid], team_name=""))
+                                  entry_id=eid, manager_name=names[eid], team_name=team_names[eid]))
         # Teams changed - any existing rivalries reference old ids, so clear them.
         s.exec(delete(Rivalry).where(Rivalry.season_id == season.id))
         s.commit()
@@ -820,7 +833,7 @@ def managers() -> dict:
     through this map so profile links keep working from anywhere on the site.
     """
     with Session(ENGINE) as s:
-        return {"index": {str(eid): {"id": i.current_entry_id, "name": i.name}
+        return {"index": {str(eid): {"id": i.current_entry_id, "name": i.name, "team": i.team}
                           for eid, i in custom_league.identities_by_entry(s).items()}}
 
 
