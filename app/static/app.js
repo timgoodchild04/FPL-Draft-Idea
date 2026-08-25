@@ -852,8 +852,14 @@ function squadColumnHtml(side, finished) {
   const groups = ["GK", "DEF", "MID", "FWD"];
   const byPos = (list) => groups.map((g) => list.filter((p) => p.position === g).map(playerRowHtml).join("")).join("");
   const liveTag = finished ? "" : ' <span class="live-tag">live</span>';
+  // Same link-out-plus-profile-icon treatment as the League table's manager
+  // cell, but the profile icon also closes this modal first - otherwise the
+  // profile page would render underneath it, hidden by the still-open overlay.
+  const mgrHeader = `<span>${mgrLink({ entry_id: side.entry_id, name: side.manager })} `
+    + `<button class="mini-link" title="View profile" `
+    + `onclick="closeMatchupModal(); showManagerProfile(${liveEntryId(side.entry_id)})">📊</button></span>`;
   return `<div class="squad-col">
-      <h4>${esc(displayName(side.entry_id, side.manager))} <span class="lp-total">${side.points != null ? side.points : "-"}</span>${liveTag}</h4>
+      <h4>${mgrHeader} <span class="lp-total">${side.points != null ? side.points : "-"}</span>${liveTag}</h4>
       <div class="starters">${byPos(side.starters)}</div>
       <div class="bench-label">Bench</div>
       <div class="bench">${side.bench.map(playerRowHtml).join("")}</div>
