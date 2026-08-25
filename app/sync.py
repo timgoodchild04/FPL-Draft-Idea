@@ -13,11 +13,22 @@ import httpx
 from sqlmodel import Session, select
 
 from app import fpl_client
+from app.custom_league import real_matches_finished
 from app.db import ENGINE, init_db
 from app.models import Gameweek, Player, PlayerGameweekStats, Team
 
 
-def _sync_reference(session: Session, boot: dict) -> None:
+def _effective_finished(client: httpx.Client, ev: dict) -> bool:
+    """FPL's own 'finished' flag lags the real final whistle - it waits on
+    bonus points being fully confirmed, which left this app showing "Live"
+    and holding the league table back well after a gameweek's real matches
+    had all finished. Treat it as finished ourselves the moment every real
+    match in the (current) gameweek is actually over.
+    """
+    return ev["finished"] or (bool(ev.get("is_current")) and real_matches_finished(client, ev["id"]))
+
+
+def _sync_reference(session: Session, client: httpx.Client, boot: dict) -> None:
     for t in boot["teams"]:
         session.merge(Team(
             id=t["id"], name=t["name"], short_name=t["short_name"], code=t["code"],
@@ -45,7 +56,7 @@ def _sync_reference(session: Session, boot: dict) -> None:
             id=ev["id"],
             name=ev["name"],
             deadline_time=ev.get("deadline_time"),
-            finished=ev["finished"],
+            finished=_effective_finished(client, ev),
             is_current=ev.get("is_current", False),
             is_next=ev.get("is_next", False),
         ))
@@ -89,14 +100,14 @@ def sync_gameweeks_only() -> int:
     init_db()
     with httpx.Client() as client:
         boot = fpl_client.fetch_bootstrap(client)
-    with Session(ENGINE) as session:
-        for ev in boot["events"]:
-            session.merge(Gameweek(
-                id=ev["id"], name=ev["name"], deadline_time=ev.get("deadline_time"),
-                finished=ev["finished"], is_current=ev.get("is_current", False),
-                is_next=ev.get("is_next", False),
-            ))
-        session.commit()
+        with Session(ENGINE) as session:
+            for ev in boot["events"]:
+                session.merge(Gameweek(
+                    id=ev["id"], name=ev["name"], deadline_time=ev.get("deadline_time"),
+                    finished=_effective_finished(client, ev), is_current=ev.get("is_current", False),
+                    is_next=ev.get("is_next", False),
+                ))
+            session.commit()
     return len(boot["events"])
 
 
@@ -105,7 +116,7 @@ def run_sync(with_stats: bool = True, max_gw: int | None = None) -> None:
     with httpx.Client() as client:
         boot = fpl_client.fetch_bootstrap(client)
         with Session(ENGINE) as session:
-            _sync_reference(session, boot)
+            _sync_reference(session, client, boot)
             print(
                 f"Reference data: {len(boot['teams'])} teams, "
                 f"{len(boot['elements'])} players, {len(boot['events'])} gameweeks."

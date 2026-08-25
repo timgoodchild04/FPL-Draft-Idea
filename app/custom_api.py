@@ -663,17 +663,34 @@ def fixtures(season_id: int | None = None) -> dict:
         # FPL Draft doesn't compute an entry's official total until its
         # gameweek is fully processed (confirmed against the live API - it
         # comes back empty mid-gameweek), so EntryPoints has nothing for a
-        # "current" gameweek yet either. For those, compute a live provisional
-        # total per entry the same way the fixture-lineup view does - "as
-        # close to live as possible" - for whichever entries have published
-        # picks; everything else (finished/upcoming) is untouched.
+        # "current" gameweek yet, and can briefly still have nothing for a
+        # gameweek we've just marked "finished" either (see
+        # _awaiting_official_points below). For both, compute a live
+        # provisional total per entry the same way the fixture-lineup view
+        # does - "as close to live as possible" - for whichever entries have
+        # published picks; a properly finished gameweek is untouched.
         live_pts: dict[tuple[int, int], int] = {}
         # Whether a real match from a current gameweek is being played right
         # now - a much tighter signal than "gameweek is current" (which spans
         # the whole multi-day round), used by the frontend to decide whether
         # its auto-refresh ticker should actually be ticking.
         match_in_play = False
-        current_gws = [] if archived else [gw for gw in gwmeta if gw_status(gw) == "current"]
+        # A gameweek we've just decided is "finished" (real matches all over -
+        # see app.sync) can still be waiting on FPL Draft to publish its own
+        # official total, which lands separately and isn't guaranteed to be
+        # instant. Keep computing a live estimate for one of those too, same
+        # as a "current" gameweek, so scores don't blank out for the gap
+        # between the two - it stops being needed the moment EntryPoints
+        # actually has a row for it.
+        def _awaiting_official_points(gw: int) -> bool:
+            entry_ids = {f.home_entry for f in rows if f.gameweek == gw} | \
+                        {f.away_entry for f in rows if f.gameweek == gw}
+            return bool(entry_ids) and not all((eid, gw) in pts for eid in entry_ids)
+
+        current_gws = [] if archived else [
+            gw for gw in gwmeta
+            if gw_status(gw) == "current" or (gw_status(gw) == "finished" and _awaiting_official_points(gw))
+        ]
         if current_gws:
             entries_by_gw: dict[int, set[int]] = {gw: set() for gw in current_gws}
             for f in rows:
@@ -698,12 +715,16 @@ def fixtures(season_id: int | None = None) -> dict:
             # score at all - even if EntryPoints has a row for it from a stale
             # sync against an older real-world calendar mapping of this same
             # gameweek id. Only "finished"/"current" (live) reveal a number.
-            status = gw_status(gw)
-            if status == "upcoming":
+            # The official EntryPoints row always wins once it exists - it's
+            # the same number the League table reads, so it must never be
+            # shadowed by a live estimate computed for some other entry in the
+            # same still-syncing gameweek.
+            if gw_status(gw) == "upcoming":
                 return None
-            if status == "current" and (entry_id, gw) in live_pts:
-                return live_pts[(entry_id, gw)]
-            return pts.get((entry_id, gw))
+            official = pts.get((entry_id, gw))
+            if official is not None:
+                return official
+            return live_pts.get((entry_id, gw))
 
         weeks: dict[int, list] = {}
         for f in rows:
@@ -786,7 +807,12 @@ def fixture_lineups(gameweek: int, home: int, away: int, season_id: int | None =
         def side(entry_id: int, lineup: dict | None) -> dict | None:
             if lineup is None:
                 return None
-            points = points_by_entry.get(entry_id) if finished else lineup.get("live_total")
+            # EntryPoints can lag a moment behind our own "finished" flag -
+            # FPL Draft publishes its official total separately - so fall back
+            # to the live-computed total rather than surfacing nothing.
+            points = points_by_entry.get(entry_id)
+            if points is None:
+                points = lineup.get("live_total")
             # "points" last and explicit: an older frozen snapshot may still
             # carry its own stale "points"/"live_total" key from an earlier
             # schema - this computed value must always win over that.

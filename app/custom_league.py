@@ -316,6 +316,26 @@ def fixture_closed_teams(session: Session, client: httpx.Client, gameweek: int) 
     return {tid for tid, flags in per_team.items() if all(flags)}
 
 
+def real_matches_finished(client: httpx.Client, gameweek: int) -> bool:
+    """Whether every real Premier League match in this gameweek is actually over.
+
+    FPL's own bootstrap-static Event.finished flag lags the real final
+    whistle - it waits on bonus points being fully confirmed, which can take
+    a good while - so app.sync uses this (the same per-match signal
+    fixture_closed_teams/any_match_in_play already rely on) to decide a
+    gameweek is over for our own purposes well before FPL's official flag
+    catches up. False if the fixture list can't be fetched or comes back
+    empty - "no information" must never read as "all done".
+    """
+    try:
+        fixtures = fpl_client.fetch_fixtures(client, gameweek)
+    except Exception:
+        return False
+    if not fixtures:
+        return False
+    return all(f.get("finished_provisional") or f.get("finished") for f in fixtures)
+
+
 def any_match_in_play(client: httpx.Client, gameweek: int) -> bool:
     """Whether a real Premier League match from this gameweek is being played
     right now (kicked off, not yet finished).
