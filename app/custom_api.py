@@ -715,15 +715,22 @@ def fixtures(season_id: int | None = None) -> dict:
             # score at all - even if EntryPoints has a row for it from a stale
             # sync against an older real-world calendar mapping of this same
             # gameweek id. Only "finished"/"current" (live) reveal a number.
-            # The official EntryPoints row always wins once it exists - it's
-            # the same number the League table reads, so it must never be
-            # shadowed by a live estimate computed for some other entry in the
-            # same still-syncing gameweek.
-            if gw_status(gw) == "upcoming":
+            status = gw_status(gw)
+            if status == "upcoming":
                 return None
-            official = pts.get((entry_id, gw))
-            if official is not None:
-                return official
+            # FPL Draft's own history endpoint (what sync_points reads into
+            # EntryPoints) starts publishing a row for a gameweek - stuck on 0
+            # - the moment it goes live, well before the real score is final.
+            # So the stored row can't be trusted as "official" until the
+            # gameweek has actually finished; before that, the live estimate
+            # (same one the fixture-lineup modal computes) is the only honest
+            # number. Once finished, EntryPoints wins - it's the same number
+            # the League table reads - falling back to the live estimate only
+            # for the brief gap where it hasn't landed yet.
+            if status == "finished":
+                official = pts.get((entry_id, gw))
+                if official is not None:
+                    return official
             return live_pts.get((entry_id, gw))
 
         weeks: dict[int, list] = {}
