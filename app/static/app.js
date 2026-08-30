@@ -806,15 +806,21 @@ function matchRowHtml(m, gw, gwStatus) {
   const homeWin = played && m.home_points > m.away_points;
   const awayWin = played && m.away_points > m.home_points;
   const clickable = gwStatus !== "upcoming";
-  const row = (name, pts, win, mine) =>
-    `<div class="mr${win ? " win" : ""}"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>` +
+  // Played-count only makes sense while the gameweek's actually live - a
+  // finished gameweek's score is already the final official number, so
+  // "how many have played" adds nothing there.
+  const showPlayed = gwStatus === "current";
+  const row = (name, pts, win, mine, playedCount, of) =>
+    `<div class="mr${win ? " win" : ""}"><span class="nm-wrap"><span class="nm${mine ? " me" : ""}">${esc(name)}</span>${
+      showPlayed && of != null ? `<span class="ply-count">(${playedCount}/${of})</span>` : ""
+    }</span>` +
     `<span class="pt">${pts != null ? pts : ""}</span></div>`;
   const homeName = displayName(m.home_id, m.home), awayName = displayName(m.away_id, m.away);
   return `<div class="match${homeMine || awayMine ? " mine" : ""}${clickable ? " clickable" : ""}"
       data-gw="${gw}" data-home="${m.home_id}" data-away="${m.away_id}"
       data-home-name="${esc(homeName)}" data-away-name="${esc(awayName)}" data-clickable="${clickable}">
-      ${row(homeName, m.home_points, homeWin, homeMine)}
-      ${row(awayName, m.away_points, awayWin, awayMine)}
+      ${row(homeName, m.home_points, homeWin, homeMine, m.home_played, m.home_of)}
+      ${row(awayName, m.away_points, awayWin, awayMine, m.away_played, m.away_of)}
     </div>`;
 }
 

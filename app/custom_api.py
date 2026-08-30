@@ -691,6 +691,11 @@ def fixtures(season_id: int | None = None) -> dict:
             gw for gw in gwmeta
             if gw_status(gw) == "current" or (gw_status(gw) == "finished" and _awaiting_official_points(gw))
         ]
+        # How many of an entry's points-contributing XI (after auto-subs) have
+        # kicked off so far this gameweek, out of the total - shown on the
+        # Fixtures grid / League "Live now" card as e.g. "(7/11)" next to a
+        # still-live score, so it's clear the total is still filling in.
+        live_played: dict[tuple[int, int], tuple[int, int]] = {}
         if current_gws:
             entries_by_gw: dict[int, set[int]] = {gw: set() for gw in current_gws}
             for f in rows:
@@ -705,10 +710,11 @@ def fixtures(season_id: int | None = None) -> dict:
                         continue
                     live_stats = custom_league.live_player_stats(client, gw)
                     closed_teams = custom_league.fixture_closed_teams(s, client, gw)
-                    for entry_id, total in custom_league.live_points_for_gameweek(
+                    for entry_id, (total, played, of) in custom_league.live_points_for_gameweek(
                         s, client, list(entry_ids), gw, live_stats, closed_teams
                     ).items():
                         live_pts[(entry_id, gw)] = total
+                        live_played[(entry_id, gw)] = (played, of)
 
         def gw_points(entry_id: int, gw: int) -> int | None:
             # A gameweek that isn't finished (or live) yet shouldn't surface a
@@ -733,14 +739,23 @@ def fixtures(season_id: int | None = None) -> dict:
                     return official
             return live_pts.get((entry_id, gw))
 
+        def gw_played(entry_id: int, gw: int) -> tuple[int, int] | None:
+            return live_played.get((entry_id, gw))
+
         weeks: dict[int, list] = {}
         for f in rows:
+            home_played = gw_played(f.home_entry, f.gameweek)
+            away_played = gw_played(f.away_entry, f.gameweek)
             weeks.setdefault(f.gameweek, []).append({
                 "home": names.get(f.home_entry, str(f.home_entry)),
                 "away": names.get(f.away_entry, str(f.away_entry)),
                 "home_id": f.home_entry, "away_id": f.away_entry,
                 "home_points": gw_points(f.home_entry, f.gameweek),
                 "away_points": gw_points(f.away_entry, f.gameweek),
+                "home_played": home_played[0] if home_played else None,
+                "home_of": home_played[1] if home_played else None,
+                "away_played": away_played[0] if away_played else None,
+                "away_of": away_played[1] if away_played else None,
                 "kind": f.kind,
             })
 

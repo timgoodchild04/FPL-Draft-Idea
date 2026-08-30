@@ -355,12 +355,16 @@ def any_match_in_play(client: httpx.Client, gameweek: int) -> bool:
 def live_points_for_gameweek(
     session: Session, client: httpx.Client, entry_ids: list[int], gameweek: int,
     live_stats: dict[int, tuple[int, int]], closed_teams: set[int],
-) -> dict[int, int]:
-    """Live provisional total per entry for one gameweek still in progress.
+) -> dict[int, tuple[int, int, int]]:
+    """Live provisional (points, players_played, squad_size) per entry for one
+    gameweek still in progress.
 
     Same auto-sub rule as entry_lineup's live_total, but skips building the
     full squad detail (names, transfers, ...) - the Fixtures list just needs
-    a number per entry, for whichever entries have published picks.
+    a number per entry, for whichever entries have published picks. The
+    played/squad_size pair is how many of the points-contributing XI (after
+    auto-subs) have kicked off so far - what the Fixtures grid shows as e.g.
+    "(7/11)" next to a live score.
     """
     picks_by_entry: dict[int, list[dict]] = {}
     needed_ids: set[int] = set()
@@ -380,7 +384,7 @@ def live_points_for_gameweek(
     players_by_id = {p.id: p for p in session.exec(select(Player).where(Player.id.in_(needed_ids))).all()}
     confirmed_no_show = {pid for pid, pl in players_by_id.items() if pl.team_id in closed_teams}
 
-    out: dict[int, int] = {}
+    out: dict[int, tuple[int, int, int]] = {}
     for entry_id, picks in picks_by_entry.items():
         ordered = sorted(picks, key=lambda p: p.get("position", 99))
         pos = lambda pid: players_by_id[pid].position if pid in players_by_id else "?"  # noqa: E731
@@ -388,7 +392,9 @@ def live_points_for_gameweek(
         starters = [sp(p) for p in ordered if p.get("position", 99) <= 11]
         bench = [sp(p) for p in ordered if p.get("position", 99) > 11]
         xi, _ = apply_auto_subs(starters, bench, live_stats, confirmed_no_show)
-        out[entry_id] = sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi)
+        points = sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi)
+        played = sum(1 for p in xi if live_stats.get(p.player_id, (0, 0))[0] > 0)
+        out[entry_id] = (points, played, len(xi))
     return out
 
 
@@ -423,7 +429,8 @@ def record_score_mismatches(session: Session, season: Season, client: httpx.Clie
     }
     for e in entries:
         off = official.get(e.entry_id)
-        comp = computed.get(e.entry_id)
+        comp_row = computed.get(e.entry_id)
+        comp = comp_row[0] if comp_row is not None else None
         if off is None or comp is None or comp == off or (e.entry_id, gameweek) in existing:
             continue
         session.add(ScoreMismatch(

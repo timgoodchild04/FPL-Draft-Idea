@@ -195,7 +195,9 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .match.clickable:hover { background: var(--accent-soft); }
 .match:last-child { border-bottom: none; }
 .match .mr { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: 14px; padding: 1px 0; }
+.match .mr .nm-wrap { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
 .match .mr .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match .mr .ply-count { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .match .mr .pt { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .match .mr.win .nm, .match .mr.win .pt { font-weight: 700; color: var(--ink); }
 .match .mr .nm.me { color: var(--accent-dark); font-weight: 600; }
