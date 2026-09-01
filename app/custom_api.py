@@ -687,10 +687,23 @@ def fixtures(season_id: int | None = None) -> dict:
                         {f.away_entry for f in rows if f.gameweek == gw}
             return bool(entry_ids) and not all((eid, gw) in pts for eid in entry_ids)
 
-        current_gws = [] if archived else [
-            gw for gw in gwmeta
-            if gw_status(gw) == "current" or (gw_status(gw) == "finished" and _awaiting_official_points(gw))
-        ]
+        # What the frontend should actually call this gameweek. Real matches
+        # finishing (gw_status "finished") isn't the same as the gameweek
+        # being *locked in* - FPL Draft's own official total can take a while
+        # to land after the final whistle (see _awaiting_official_points), and
+        # until it does, every score on screen is still just our live
+        # estimate. Keep reporting "current" through that gap so the League
+        # tab's "Live now" card and the Fixtures grid's played-count both
+        # keep showing (and don't mislabel a provisional score as final) -
+        # it only flips to "finished" once EntryPoints actually has a row for
+        # every entry in the gameweek.
+        def display_status(gw: int) -> str:
+            status = gw_status(gw)
+            if status == "finished" and not archived and _awaiting_official_points(gw):
+                return "current"
+            return status
+
+        current_gws = [] if archived else [gw for gw in gwmeta if display_status(gw) == "current"]
         # How many of an entry's points-contributing XI (after auto-subs) have
         # kicked off so far this gameweek, out of the total - shown on the
         # Fixtures grid / League "Live now" card as e.g. "(7/11)" next to a
@@ -773,7 +786,7 @@ def fixtures(season_id: int | None = None) -> dict:
             "match_in_play": match_in_play,
             "gameweeks": [{"gameweek": gw,
                            "deadline": gw_deadline(gw),
-                           "status": gw_status(gw), "matches": m}
+                           "status": display_status(gw), "matches": m}
                           for gw, m in sorted(weeks.items())],
         }
 
