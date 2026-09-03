@@ -974,8 +974,9 @@ async function renderFixtures(background) {
   };
 
   if (!background) {
-    const cur = data.gameweeks.find((w) => w.status === "current");
-    if (cur) { const n = el(`gwc-${cur.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    const target = data.gameweeks.find((w) => w.status === "current")
+      || data.gameweeks.find((w) => w.status === "upcoming");
+    if (target) { const n = el(`gwc-${target.gameweek}`); if (n) n.scrollIntoView({ behavior: "smooth", block: "center" }); }
   }
   return data;
 };
