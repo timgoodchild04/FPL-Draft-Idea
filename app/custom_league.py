@@ -276,14 +276,15 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
 
 
 def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[int, int]]:
-    """Live per-player (minutes, total_points) for a gameweek, straight from FPL.
+    """Live per-player (minutes, total_points) for a gameweek, straight from
+    the draft game - keyed by draft element id, to match the picks.
 
     Unlike our own PlayerGameweekStats table (only backfilled once a gameweek
     is *finished* - see app.sync), this works mid-gameweek too, which the
     fixture-lineup view needs to show a running score as a match happens.
     """
     try:
-        live = fpl_client.fetch_gameweek_live(client, gameweek)
+        live = fpldraft_client.fetch_gameweek_live(client, gameweek)
     except Exception:
         return {}
     return {el["id"]: (el["stats"]["minutes"], el["stats"]["total_points"]) for el in live.get("elements", [])}
@@ -485,6 +486,12 @@ def entry_lineup(
     that table, exactly like the League
     table does.
     """
+    # Snapshots taken before players were keyed by draft element id can show
+    # the wrong player (classic ids differ for mid-season additions). Those are
+    # rebuilt from the draft site when its picks are still available, and kept
+    # as-is otherwise - always for an archived season, whose entry ids the
+    # draft API no longer serves.
+    stale = None
     if finished and season_id is not None:
         snap = session.exec(
             select(FixtureLineupSnapshot).where(
@@ -494,15 +501,19 @@ def entry_lineup(
             )
         ).first()
         if snap:
-            return json.loads(snap.data)
+            data = json.loads(snap.data)
+            season = session.get(Season, season_id)
+            if data.get("ids") == "draft" or (season and season.archived_at):
+                return data
+            stale = snap
 
     try:
         raw = fpldraft_client.fetch_entry_picks(client, entry_id, gameweek)
     except Exception:
-        return None
+        raw = {}
     picks = raw.get("picks") or []
     if not picks:
-        return None
+        return json.loads(stale.data) if stale else None
 
     player_ids = {p["element"] for p in picks}
     transfers = _entry_transfers(client, entry_id, gameweek, player_ids)
@@ -559,13 +570,18 @@ def entry_lineup(
         # only while the gameweek isn't finished; once it is, EntryPoints (the
         # same row the League table reads) is the authoritative score instead.
         "live_total": sum(live_stats.get(p.player_id, (0, 0))[1] for p in xi),
+        "ids": "draft",
     }
 
     if finished and season_id is not None:
         try:
-            session.add(FixtureLineupSnapshot(
-                season_id=season_id, entry_id=entry_id, gameweek=gameweek, data=json.dumps(result),
-            ))
+            if stale:
+                stale.data = json.dumps(result)
+                session.add(stale)
+            else:
+                session.add(FixtureLineupSnapshot(
+                    season_id=season_id, entry_id=entry_id, gameweek=gameweek, data=json.dumps(result),
+                ))
             session.commit()
         except Exception:
             session.rollback()  # another request already snapshotted this - fine, we still return it

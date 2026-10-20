@@ -19,12 +19,38 @@ HEADERS = {"User-Agent": "fpl-draft-league/0.1 (local private league tool)"}
 # trigger their own round trip for the same entry.
 CACHE_TTL_SECONDS = 30
 _picks_cache: dict[tuple[int, int], tuple[float, dict]] = {}
+_live_cache: dict[int, tuple[float, dict]] = {}
 
 
 def _get(client: httpx.Client, path: str) -> dict:
     resp = client.get(f"{BASE}{path}", headers=HEADERS, timeout=30)
     resp.raise_for_status()
     return resp.json()
+
+
+def fetch_bootstrap(client: httpx.Client) -> dict:
+    """Draft-game reference data. Its `elements` are the players to use for
+    anything keyed by a draft pick's `element` id - the classic game numbers
+    players added mid-season differently, so its ids don't line up.
+    """
+    return _get(client, "/bootstrap-static")
+
+
+def fetch_gameweek_live(client: httpx.Client, gw: int) -> dict:
+    """Per-player stats for a gameweek, keyed by draft element id.
+
+    The draft API returns `elements` as {"<id>": {"stats": ...}}; this
+    reshapes it to the classic game's [{"id": <id>, "stats": ...}] list so
+    callers can treat the two the same.
+    """
+    cached = _live_cache.get(gw)
+    now = time.monotonic()
+    if cached and now - cached[0] < CACHE_TTL_SECONDS:
+        return cached[1]
+    raw = _get(client, f"/event/{gw}/live")
+    data = {"elements": [{"id": int(pid), "stats": el["stats"]} for pid, el in (raw.get("elements") or {}).items()]}
+    _live_cache[gw] = (now, data)
+    return data
 
 
 def fetch_league_details(client: httpx.Client, league_id: int) -> dict:

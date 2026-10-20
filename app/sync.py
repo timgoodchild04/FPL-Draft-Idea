@@ -12,7 +12,7 @@ import argparse
 import httpx
 from sqlmodel import Session, select
 
-from app import fpl_client
+from app import fpl_client, fpldraft_client
 from app.custom_league import real_matches_finished
 from app.db import ENGINE, init_db
 from app.models import Gameweek, Player, PlayerGameweekStats, Team
@@ -28,13 +28,16 @@ def _effective_finished(client: httpx.Client, ev: dict) -> bool:
     return ev["finished"] or (bool(ev.get("is_current")) and real_matches_finished(client, ev["id"]))
 
 
-def _sync_reference(session: Session, client: httpx.Client, boot: dict) -> None:
+def _sync_reference(session: Session, client: httpx.Client, boot: dict, draft_boot: dict) -> None:
     for t in boot["teams"]:
         session.merge(Team(
             id=t["id"], name=t["name"], short_name=t["short_name"], code=t["code"],
         ))
 
-    for e in boot["elements"]:
+    # Players come from the draft game, not the classic one: picks reference
+    # draft element ids, and the two games number mid-season additions
+    # differently (e.g. draft 566 is Hornicek, classic 566 is Silva).
+    for e in draft_boot["elements"]:
         session.merge(Player(
             id=e["id"],
             web_name=e["web_name"],
@@ -47,7 +50,7 @@ def _sync_reference(session: Session, client: httpx.Client, boot: dict) -> None:
             goals_scored=e["goals_scored"],
             assists=e["assists"],
             clean_sheets=e["clean_sheets"],
-            now_cost=e["now_cost"],
+            now_cost=e.get("now_cost", 0),  # the draft game has no prices
             status=e["status"],
         ))
 
@@ -72,7 +75,7 @@ def _sync_gameweek_stats(session: Session, client: httpx.Client, max_gw: int | N
 
     rows = 0
     for gw in finished:
-        live = fpl_client.fetch_gameweek_live(client, gw.id)
+        live = fpldraft_client.fetch_gameweek_live(client, gw.id)
         for el in live["elements"]:
             s = el["stats"]
             session.merge(PlayerGameweekStats(
@@ -115,11 +118,12 @@ def run_sync(with_stats: bool = True, max_gw: int | None = None) -> None:
     init_db()
     with httpx.Client() as client:
         boot = fpl_client.fetch_bootstrap(client)
+        draft_boot = fpldraft_client.fetch_bootstrap(client)
         with Session(ENGINE) as session:
-            _sync_reference(session, client, boot)
+            _sync_reference(session, client, boot, draft_boot)
             print(
                 f"Reference data: {len(boot['teams'])} teams, "
-                f"{len(boot['elements'])} players, {len(boot['events'])} gameweeks."
+                f"{len(draft_boot['elements'])} players, {len(boot['events'])} gameweeks."
             )
             if with_stats:
                 rows = _sync_gameweek_stats(session, client, max_gw)
