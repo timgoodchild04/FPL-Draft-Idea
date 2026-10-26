@@ -243,6 +243,20 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
     rows = 0
     failed: list[int] = []
     try:
+        # FPL Draft's history row for a gameweek isn't final until FPL Draft
+        # itself finalises that gameweek - before that it only moves in
+        # batches (e.g. GW8 26/27 sat on a Saturday-only 22 after Sunday's
+        # matches had ended, when the real score was 40). Our own "finished"
+        # flag flips at the final whistle (app.sync), and from then on every
+        # view trusts EntryPoints, so an interim row would be shown as the
+        # final score. Leave those out: the views fall back to the live
+        # estimate for a finished gameweek with no row, and the table skips it.
+        try:
+            game = fpldraft_client.fetch_game(client)
+            current = game.get("current_event") or 0
+            final_up_to = current if game.get("current_event_finished") else current - 1
+        except Exception:
+            final_up_to = None  # can't tell - keep every row, as before
         for e in entries:
             try:
                 hist = fpldraft_client.fetch_entry_history(client, e.entry_id)
@@ -250,6 +264,8 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
                 failed.append(e.entry_id)  # one bad id shouldn't zero the whole league
                 continue
             for ev in hist.get("history", []):
+                if final_up_to is not None and ev["event"] > final_up_to:
+                    continue
                 session.add(EntryPoints(season_id=season.id, entry_id=e.entry_id,
                                         gameweek=ev["event"], points=ev["points"]))
                 rows += 1

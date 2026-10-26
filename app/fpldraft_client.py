@@ -53,6 +53,13 @@ def fetch_gameweek_live(client: httpx.Client, gw: int) -> dict:
     return data
 
 
+def fetch_game(client: httpx.Client) -> dict:
+    """Draft game state: `current_event` and whether FPL Draft has finalised
+    it (`current_event_finished`) - the point its entry histories stop moving.
+    """
+    return _get(client, "/game")
+
+
 def fetch_league_details(client: httpx.Client, league_id: int) -> dict:
     """League entries, standings, and the full H2H match schedule/results."""
     return _get(client, f"/league/{league_id}/details")
