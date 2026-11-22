@@ -26,6 +26,9 @@ class LeagueMeta(SQLModel, table=True):
     season_id: int = Field(foreign_key="season.id", primary_key=True)
     fixtures_generated_at: str | None = None  # ISO UTC timestamp
     points_synced_at: str | None = None       # ISO UTC timestamp of last results sync
+    # Last FPL-Draft-finalised gameweek the score cross-check has run for
+    # (see custom_api._flag_new_mismatches). None = not started yet.
+    mismatch_checked_gw: int | None = None
 
 
 class Rivalry(SQLModel, table=True):
@@ -54,14 +57,13 @@ class EntryPoints(SQLModel, table=True):
 
 
 class ScoreMismatch(SQLModel, table=True):
-    """Flags a finished gameweek where our own picks-based computation didn't
-    match FPL Draft's own official recorded total for that entry.
+    """Flags a gameweek FPL Draft has finalised where our own picks-based live
+    estimate didn't match its official total for that entry.
 
-    Once a gameweek is finished its score should be fixed and unambiguous, so
-    a mismatch here means FPL Draft's own systems disagreed with themselves
-    (their public API vs their website returning different squads for the
-    same entry/gameweek) - not something this app can correct, only flag for
-    an admin to notice on Setup.
+    The site shows the official total once a gameweek is finalised, so this
+    is never a wrong score on the site - it's a note for an admin on Setup
+    that the live estimate (shown mid-gameweek) worked something out
+    differently. See custom_league.record_score_mismatches.
     """
 
     __table_args__ = (

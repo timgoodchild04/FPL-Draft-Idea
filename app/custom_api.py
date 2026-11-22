@@ -536,20 +536,32 @@ def extend_schedule(seed: int | None = None, _admin: bool = Depends(require_admi
         return {**added, **_status(s, season)}
 
 
-def _flag_new_mismatches(s: Session, season: Season, before_finished: set[int]) -> None:
-    """Best-effort: once a gameweek just became finished in this sync, sanity
-    check its scores against our own picks-based computation (see
+def _flag_new_mismatches(s: Session, season: Season, final_up_to: int | None) -> None:
+    """Best-effort: for each gameweek FPL Draft has newly *finalised* (not just
+    reached the final whistle - its official total is interim until then),
+    cross-check the official score against our live estimate (see
     custom_league.record_score_mismatches). Diagnostic only - never allowed
     to fail the sync it's piggybacking on.
     """
     try:
-        after_finished = {g.id for g in s.exec(select(Gameweek).where(Gameweek.finished == True)).all()}  # noqa: E712
-        newly = sorted(after_finished - before_finished)
-        if not newly:
+        if not final_up_to or final_up_to < 1:
+            return
+        meta = s.get(LeagueMeta, season.id) or LeagueMeta(season_id=season.id)
+        if meta.mismatch_checked_gw is None:
+            # First run: start from now rather than back-checking every past
+            # gameweek (older flags came from the interim-score bug).
+            meta.mismatch_checked_gw = final_up_to
+            s.add(meta)
+            s.commit()
+            return
+        if final_up_to <= meta.mismatch_checked_gw:
             return
         with httpx.Client() as client:
-            for gw in newly:
+            for gw in range(meta.mismatch_checked_gw + 1, final_up_to + 1):
                 custom_league.record_score_mismatches(s, season, client, gw)
+                meta.mismatch_checked_gw = gw  # advance only once a gameweek's check succeeded
+                s.add(meta)
+                s.commit()
     except Exception:
         pass
 
@@ -561,12 +573,11 @@ def sync_points(_admin: bool = Depends(require_admin)) -> dict:
         if season is None:
             raise HTTPException(400, "Set up your two leagues first.")
         try:
-            before_finished = {g.id for g in s.exec(select(Gameweek).where(Gameweek.finished == True)).all()}  # noqa: E712
             from app.sync import sync_gameweeks_only
             sync_gameweeks_only()  # keep 'finished' flags current before scoring
             s.expire_all()
             result = custom_league.sync_points(s, season)
-            _flag_new_mismatches(s, season, before_finished)
+            _flag_new_mismatches(s, season, result.get("final_up_to"))
             return result
         except ValueError as e:
             raise HTTPException(400, str(e))
@@ -604,12 +615,11 @@ def refresh() -> dict:
             except Exception:
                 pass
         try:
-            before_finished = {g.id for g in s.exec(select(Gameweek).where(Gameweek.finished == True)).all()}  # noqa: E712
             from app.sync import sync_gameweeks_only
             sync_gameweeks_only()
             s.expire_all()
-            custom_league.sync_points(s, season)
-            _flag_new_mismatches(s, season, before_finished)
+            result = custom_league.sync_points(s, season)
+            _flag_new_mismatches(s, season, result.get("final_up_to"))
         except Exception:
             return {"synced": False, "last_updated": last}
         meta = s.get(LeagueMeta, season.id)
@@ -928,8 +938,8 @@ def managers() -> dict:
 @current_router.get("/score-mismatches")
 def score_mismatches(_admin: bool = Depends(require_admin)) -> list[dict]:
     """Un-dismissed score reconciliation flags for the current season - see
-    custom_league.record_score_mismatches. Admin-only: this is a caveat about
-    FPL Draft's own data, not something other managers can act on."""
+    custom_league.record_score_mismatches. Admin-only: a note about our live
+    estimate, not something other managers can act on."""
     with Session(ENGINE) as s:
         season = _current(s)
         if season is None:
@@ -942,6 +952,21 @@ def score_mismatches(_admin: bool = Depends(require_admin)) -> list[dict]:
         return [{"id": r.id, "entry_id": r.entry_id, "gameweek": r.gameweek, "manager_name": r.manager_name,
                  "computed_points": r.computed_points, "official_points": r.official_points,
                  "detected_at": r.detected_at} for r in rows]
+
+
+@current_router.post("/score-mismatches/dismiss-all")
+def dismiss_all_score_mismatches(_admin: bool = Depends(require_admin)) -> dict:
+    with Session(ENGINE) as s:
+        season = _current(s)
+        if season is None:
+            return {"dismissed": 0}
+        rows = s.exec(select(ScoreMismatch).where(
+            ScoreMismatch.season_id == season.id, ScoreMismatch.dismissed == False)).all()  # noqa: E712
+        for r in rows:
+            r.dismissed = True
+            s.add(r)
+        s.commit()
+        return {"dismissed": len(rows)}
 
 
 @current_router.post("/score-mismatches/{mismatch_id}/dismiss")

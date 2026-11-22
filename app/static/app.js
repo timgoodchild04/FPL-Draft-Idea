@@ -454,14 +454,17 @@ views.setup = async function () {
   // app can fix, so just flag it here rather than silently trusting a
   // number that might not match what managers see on the official site.
   const mismatchCard = (mismatches && mismatches.length) ? `<div class="card" style="margin-top:12px;border-color:var(--danger)">
-      <h3 style="margin-top:0">⚠️ Score mismatch${mismatches.length === 1 ? "" : "es"} detected</h3>
-      <p class="muted">FPL Draft's own public API returned a different squad than its website shows for
-        these entries, for a gameweek that should already be locked in. Not something we can fix on our
-        end - "official" below is whatever their API/history endpoint reports, which is what this site uses.</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <h3 style="margin:0">⚠️ Live score check</h3>
+        ${mismatches.length > 1 ? `<button class="btn small" id="dismissAllMismatches">Dismiss all</button>` : ""}
+      </div>
+      <p class="muted">The site always shows FPL Draft's official score, so nothing here is wrong on the
+        site. These are gameweeks where our live estimate (shown while matches are being played) worked
+        out differently from the final official score - worth a look if the same thing keeps coming up.</p>
       <table><tbody>${mismatches.map((m) => `<tr>
           <td>${esc(m.manager_name)}</td>
           <td class="num">GW${m.gameweek}</td>
-          <td class="num">our calc: ${m.computed_points}</td>
+          <td class="num">live estimate: ${m.computed_points}</td>
           <td class="num">official: ${m.official_points}</td>
           <td class="num"><button class="btn small" data-dismiss-mismatch="${m.id}">Dismiss</button></td>
         </tr>`).join("")}</tbody></table>
@@ -560,6 +563,11 @@ views.setup = async function () {
   el("logoutBtn").onclick = () => {
     clearAdminAuth();
     toast("Logged out"); refreshBadge(); views.setup();
+  };
+  if (el("dismissAllMismatches")) el("dismissAllMismatches").onclick = async () => {
+    try { await api("/api/custom/score-mismatches/dismiss-all", { method: "POST" }); }
+    catch (e) { return toast(e.message, true); }
+    toast("All dismissed"); views.setup();
   };
   document.querySelectorAll("[data-dismiss-mismatch]").forEach((btn) => {
     btn.onclick = async () => {

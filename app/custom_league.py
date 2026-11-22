@@ -288,7 +288,7 @@ def sync_points(session: Session, season: Season, client: httpx.Client | None = 
     meta.points_synced_at = datetime.now(timezone.utc).isoformat()
     session.add(meta)
     session.commit()
-    return {"teams": len(entries), "point_rows": rows, "failed": failed}
+    return {"teams": len(entries), "point_rows": rows, "failed": failed, "final_up_to": final_up_to}
 
 
 def live_player_stats(client: httpx.Client, gameweek: int) -> dict[int, tuple[int, int]]:
@@ -416,15 +416,16 @@ def live_points_for_gameweek(
 
 
 def record_score_mismatches(session: Session, season: Season, client: httpx.Client, gameweek: int) -> None:
-    """Sanity-check a just-finished gameweek: recompute each entry's score
-    from its picks the same way the live views do, and compare against the
-    official total EntryPoints just synced from /entry/{id}/history.
+    """Cross-check a gameweek FPL Draft has finalised: recompute each entry's
+    score from its picks the same way the live views do, and compare against
+    the official total EntryPoints just synced from /entry/{id}/history.
 
-    A finished gameweek's score should be fixed and unambiguous, so any
-    mismatch here means FPL Draft's own systems disagreed with themselves
-    (their public API returning a different squad for an entry than their
-    own website shows) - nothing this app can fix, only flag on Setup so an
-    admin notices instead of silently trusting a number that might be wrong.
+    The site always shows the official number once a gameweek is finalised,
+    so a mismatch never means a wrong score on the site. It means our live
+    estimate (what's shown while a gameweek is in play) worked something out
+    differently - e.g. an auto-sub or bonus rule - which is worth an admin
+    knowing about. Must only run after finalisation: before that FPL's history
+    row is interim, and comparing against it produced false flags.
     """
     a, b = collect_divisions(session, season)
     entries = a + b
