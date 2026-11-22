@@ -5,6 +5,7 @@ Run: uvicorn app.main:app --reload
 from __future__ import annotations
 
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +21,13 @@ from app.models import Gameweek, Player, PlayerGameweekStats, Team
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Branksbowl", version="0.1")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _startup()  # runs once at boot, before the first request
+    yield
+
+
+app = FastAPI(title="Branksbowl", version="0.1", lifespan=_lifespan)
 _STARTED_AT = datetime.now(timezone.utc)
 
 
@@ -43,7 +50,6 @@ app.include_router(custom_router)
 app.include_router(custom_current_router)
 
 
-@app.on_event("startup")
 def _startup() -> None:
     init_db()
     # The FPL syncs below call an external API and write to the DB, so run them
