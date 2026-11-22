@@ -114,3 +114,16 @@ that it never sleeps.
   them until the next month.
 - On startup the app syncs FPL data in a background thread, so on the odd
   occasion it does go to sleep, it wakes as fast as Render allows.
+
+## Tests
+
+Automated checks for the scoring rules (auto-subs, live scores, the league
+table, the points sync and the playoffs). They use a throwaway in-memory
+database and fake FPL responses, so they never touch the real data or FPL.
+
+```bash
+./.venv/bin/pip install -r requirements-dev.txt   # once
+./.venv/bin/python -m pytest -q -p no:anyio
+```
+
+Run them before pushing any change to scoring.

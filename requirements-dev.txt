@@ -1,0 +1,3 @@
+# Local-only extras (not installed on Render).
+-r requirements.txt
+pytest
