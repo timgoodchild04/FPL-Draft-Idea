@@ -4,6 +4,7 @@ Run: uvicorn app.main:app --reload
 """
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,6 +46,13 @@ app.include_router(custom_current_router)
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    # The FPL syncs below call an external API and write to the DB, so run them
+    # in a background thread: the server starts taking requests as soon as the
+    # container is up instead of waiting on FPL (shortens Render cold starts).
+    threading.Thread(target=_startup_sync, name="startup-sync", daemon=True).start()
+
+
+def _startup_sync() -> None:
     # On a fresh (e.g. cloud) database, populate the gameweek finished-flags the
     # league tables need. One API call; ignored if it can't reach FPL at boot.
     try:
@@ -63,6 +71,13 @@ def _startup() -> None:
         run_sync(with_stats=False)
     except Exception as e:
         print("startup reference sync skipped:", e)
+
+
+@app.get("/ping")
+def ping() -> dict:
+    # Keep-alive target for an external uptime pinger (stops Render's free tier
+    # sleeping). Deliberately touches no DB, so pings don't keep Neon awake too.
+    return {"status": "ok"}
 
 
 @app.get("/health")
